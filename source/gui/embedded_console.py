@@ -1,46 +1,78 @@
-import sys
 import re
+import sys
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel
-from PyQt6.Qsci import QsciScintilla, QsciLexerPython, QsciAPIs
-from PyQt6.QtGui import QFont, QKeyEvent, QPixmap, QImage
-from PyQt6.QtCore import Qt
-
+import matplotlib.pyplot as plt
+import numpy as np
 from IPython.core.interactiveshell import InteractiveShell
 from IPython.utils.capture import capture_output
-import numpy as np
-import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from PyQt6.Qsci import QsciAPIs, QsciLexerPython, QsciScintilla
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont, QImage, QKeyEvent, QPixmap, QColor, QPalette
+from PyQt6.QtWidgets import (QApplication, QLabel, QMainWindow, QVBoxLayout,
+                             QWidget, QDockWidget, QTextEdit)
+
 
 class ScintillaConsole(QsciScintilla):
     # Regex to match ANSI escape sequences (like \x1b[31m)
-    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-    
-    def __init__(self, prompt_str):
-        super().__init__()
+    ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+    def __init__(self, parent = None, prompt_str : str = ">>> ", welcome_message :str = "QNEP IPython console\n", color_theme : str ='dark'):
+        super().__init__(parent = parent)
 
         self.prompt_str = prompt_str
-        self.plot_window = PlotWindow()
+        self.plot_window = PlotWindow(parent=self.parent())
         self.plot_window.hide()
+        
+        self.color_theme = color_theme
+        # --- Core background colors
+        bg_color = QColor("#1e1e1e")
+        fg_color = QColor("#dcdcdc")
         
         # IPython shell setup
         self.shell = InteractiveShell.instance()
         self.user_ns = self.shell.user_ns
-        self.user_ns.update({'np': np, 'plt': plt})
+        self.user_ns.update({"np": np, "plt": plt})
 
         # Editor look
         self.setUtf8(True)
-        font = QFont("Courier", 12)
+        font = QFont("Consolas", 12)
         self.setFont(font)
         self.setMarginsFont(font)
-        self.setMarginLineNumbers(1, True)
-        self.setMarginsBackgroundColor(Qt.GlobalColor.lightGray)
+        
+        # Basic colors
         self.setCaretLineVisible(True)
-        self.setCaretLineBackgroundColor(Qt.GlobalColor.yellow)
+        self.setCaretLineBackgroundColor(Qt.GlobalColor.darkGray)
+
+        self.setColor(Qt.GlobalColor.white)            # default text
+        self.setPaper(Qt.GlobalColor.black)            # background
+        
+        # Editor text area and margins
+        self.setPaper(bg_color)                       # Text area
+        self.setColor(fg_color)                       # Default text
+        self.setMarginsBackgroundColor(bg_color)
+        self.setMarginsForegroundColor(QColor("#888"))  # Line numbers
+        #self.setMarginsBackgroundColor(Qt.GlobalColor.black)
+        #self.setMarginsForegroundColor(Qt.GlobalColor.lightGray)
+
+        self.setMarginLineNumbers(1, True)
+        
+        # Set background of whole widget (scrollbars etc)
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Base, bg_color)
+        palette.setColor(QPalette.ColorRole.Window, bg_color)
+        self.setPalette(palette)
+
+        # Viewport (extra coverage for some themes)
+        self.viewport().setStyleSheet("background-color: #1e1e1e;")
 
         # Syntax highlighting
         self.lexer = QsciLexerPython()
         self.lexer.setDefaultFont(font)
+        
+        # Background & default
+        self.lexer.setPaper(Qt.GlobalColor.black)
+        self.lexer.setColor(Qt.GlobalColor.white)  # default text
         self.setLexer(self.lexer)
 
         # Auto-completion setup
@@ -57,43 +89,91 @@ class ScintillaConsole(QsciScintilla):
         self.history_index = 0
 
         # Prompt management
-        self.appendText("# PyQt6 + IPython Console\n")
+        self.appendText(welcome_message)
+        self.appendText("\n")
         self.appendText(self.prompt_str)
         self.prompt_line = self.lines() - 1
-        
+
         self.STYLE_STDERR = 128
-        self.SendScintilla(self.SCI_STYLESETFORE, self.STYLE_STDERR, Qt.GlobalColor.red)
         self.SendScintilla(self.SCI_STYLESETFONT, self.STYLE_STDERR, b"Courier")
-        self.SendScintilla(self.SCI_STYLESETSIZE, self.STYLE_STDERR, 12)
+        self.SendScintilla(self.SCI_STYLESETSIZE, self.STYLE_STDERR, 12)        
+        self.SendScintilla(self.SCI_STYLESETBACK, self.STYLE_STDERR, QColor("#1e1e1e"))
+        self.SendScintilla(self.SCI_STYLESETFORE, self.STYLE_STDERR, QColor("red"))
+        
+        if self.color_theme == 'light':
+            self.set_light_theme()
+        else:
+            self.set_dark_theme()
 
     @staticmethod
     def remove_ansi_codes(text):
-        return ScintillaConsole.ansi_escape.sub('', text)
+        return ScintillaConsole.ansi_escape.sub("", text)
 
     def get_current_input(self):
         total_lines = self.lines()
         return "\n".join([self.text(i) for i in range(self.prompt_line, total_lines)])
 
-    # def mousePressEvent(self, event):
-    #     x = int(event.position().x())
-    #     y = int(event.position().y())
-    #     pos = self.SendScintilla(self.SCI_POSITIONFROMPOINT, x, y)
-    #     line, index = self.lineIndexFromPosition(pos)
+    def set_dark_theme(self):
+        from PyQt6.QtGui import QColor, QPalette
 
-    #     if line < self.prompt_line:
-    #         return  # Block mouse interaction above prompt
-    #     super().mousePressEvent(event)
+        bg_color = QColor("#1e1e1e")
+        fg_color = QColor("#dcdcdc")
 
-    # def mouseMoveEvent(self, event):
-    #     x = int(event.position().x())
-    #     y = int(event.position().y())
-    #     pos = self.SendScintilla(self.SCI_POSITIONFROMPOINT, x, y)
-    #     line, index = self.lineIndexFromPosition(pos)
+        self.setPaper(bg_color)
+        self.setColor(fg_color)
+        self.setMarginsBackgroundColor(bg_color)
+        self.setMarginsForegroundColor(QColor("#888888"))
+        self.setCaretLineBackgroundColor(QColor("#2a2a2a"))
 
-    #     if line < self.prompt_line:
-    #         return
-    #     super().mouseMoveEvent(event)
-    
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Base, bg_color)
+        palette.setColor(QPalette.ColorRole.Window, bg_color)
+        self.setPalette(palette)
+        self.viewport().setStyleSheet("background-color: #1e1e1e;")
+
+        self.lexer.setColor(fg_color)
+        self.lexer.setPaper(bg_color)
+
+        self.lexer.setColor(QColor("#569CD6"), QsciLexerPython.Keyword)
+        self.lexer.setColor(QColor("#6A9955"), QsciLexerPython.Comment)
+        self.lexer.setColor(QColor("#DCDCAA"), QsciLexerPython.Number)
+        self.lexer.setColor(QColor("#CE9178"), QsciLexerPython.DoubleQuotedString)
+        self.lexer.setColor(QColor("#CE9178"), QsciLexerPython.SingleQuotedString)
+        self.lexer.setColor(QColor("#4EC9B0"), QsciLexerPython.ClassName)
+        self.lexer.setColor(QColor("#DCDCDC"), QsciLexerPython.FunctionMethodName)
+        self.lexer.setColor(QColor("#D16969"), QsciLexerPython.Operator)
+        self.lexer.setColor(QColor("#C586C0"), QsciLexerPython.Decorator)
+
+    def set_light_theme(self):
+        bg_color = QColor("#ffffff")
+        fg_color = QColor("#000000")
+
+        self.setPaper(bg_color)
+        self.setColor(fg_color)
+        self.setMarginsBackgroundColor(QColor("#f0f0f0"))
+        self.setMarginsForegroundColor(QColor("#888888"))
+        self.setCaretLineBackgroundColor(QColor("#e8e8ff"))
+
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Base, bg_color)
+        palette.setColor(QPalette.ColorRole.Window, bg_color)
+        self.setPalette(palette)
+        self.viewport().setStyleSheet("background-color: white;")
+
+        # 👇 Persistent lexer object
+        self.lexer.setColor(fg_color)
+        self.lexer.setPaper(bg_color)
+
+        self.lexer.setColor(QColor("#0000ff"), QsciLexerPython.Keyword)
+        self.lexer.setColor(QColor("#008000"), QsciLexerPython.Comment)
+        self.lexer.setColor(QColor("#800000"), QsciLexerPython.Number)
+        self.lexer.setColor(QColor("#a31515"), QsciLexerPython.DoubleQuotedString)
+        self.lexer.setColor(QColor("#a31515"), QsciLexerPython.SingleQuotedString)
+        self.lexer.setColor(QColor("#267f99"), QsciLexerPython.ClassName)
+        self.lexer.setColor(QColor("#795E26"), QsciLexerPython.FunctionMethodName)
+        self.lexer.setColor(QColor("#000000"), QsciLexerPython.Operator)
+        self.lexer.setColor(QColor("#AF00DB"), QsciLexerPython.Decorator)
+        
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
         modifiers = event.modifiers()
@@ -108,7 +188,8 @@ class ScintillaConsole(QsciScintilla):
         # Prevent backspace/delete into prompt
         if key in [Qt.Key.Key_Backspace, Qt.Key.Key_Delete]:
             if cursor_line < self.prompt_line or (
-                cursor_line == self.prompt_line and cursor_index <= len(self.prompt_str)):
+                cursor_line == self.prompt_line and cursor_index <= len(self.prompt_str)
+            ):
                 return
 
         # Execute code on Enter (without Shift)
@@ -127,7 +208,11 @@ class ScintillaConsole(QsciScintilla):
                 self.in_history_mode = True
                 self.history_index = len(self.history)
 
-            matches = [h for h in self.history if h.startswith(self.history_pending_input.strip())]
+            matches = [
+                h
+                for h in self.history
+                if h.startswith(self.history_pending_input.strip())
+            ]
             if matches:
                 self.history_index = max(0, self.history_index - 1)
                 match = matches[self.history_index % len(matches)]
@@ -139,7 +224,11 @@ class ScintillaConsole(QsciScintilla):
             if not self.in_history_mode:
                 return
 
-            matches = [h for h in self.history if h.startswith(self.history_pending_input.strip())]
+            matches = [
+                h
+                for h in self.history
+                if h.startswith(self.history_pending_input.strip())
+            ]
 
             if matches:
                 if self.history_index + 1 >= len(matches):
@@ -173,7 +262,7 @@ class ScintillaConsole(QsciScintilla):
         code = "\n".join(code_lines).strip()
 
         if not code:
-            self.appendText("\n"+self.prompt_line)
+            self.appendText("\n" + self.prompt_line)
             self.prompt_line = self.lines() - 1
             return
 
@@ -196,8 +285,10 @@ class ScintillaConsole(QsciScintilla):
         if stdout:
             self.appendText(f"\n{ScintillaConsole.remove_ansi_codes(stdout)}")
         if stderr:
-            self.appendTextStyled(ScintillaConsole.remove_ansi_codes(stderr), self.STYLE_STDERR)
-        self.appendText("\n"+self.prompt_str)
+            self.appendTextStyled(
+                ScintillaConsole.remove_ansi_codes(stderr), self.STYLE_STDERR
+            )
+        self.appendText("\n" + self.prompt_str)
         self.prompt_line = self.lines() - 1
         self.update_autocompletions()
         self.render_inline_plot()
@@ -210,7 +301,7 @@ class ScintillaConsole(QsciScintilla):
         """Replaces current input (from prompt line to end) with `new_text`."""
         total_lines = self.lines()
         last_line_index = len(self.text(total_lines - 1))
- 
+
         # Clear current input area
         self.setSelection(self.prompt_line, 0, total_lines - 1, last_line_index)
         self.removeSelectedText()
@@ -232,7 +323,7 @@ class ScintillaConsole(QsciScintilla):
     def update_autocompletions(self):
         """Safely updates the API list for autocompletion using the current IPython namespace."""
         try:
-            if not hasattr(self, 'api') or self.api is None:
+            if not hasattr(self, "api") or self.api is None:
                 return  # No API object to update
 
             self.api.clear()
@@ -244,14 +335,16 @@ class ScintillaConsole(QsciScintilla):
             self.api.prepare()
         except RuntimeError as e:
             print(f"[AutoCompletion Error] {e}")
-    
+
     def appendTextStyled(self, text: str, style: int):
         """Appends text with a specific style (e.g., red for errors)."""
         self.moveCursorToEnd()
-        self.SendScintilla(self.SCI_STARTSTYLING, self.SendScintilla(self.SCI_GETCURRENTPOS))
+        self.SendScintilla(
+            self.SCI_STARTSTYLING, self.SendScintilla(self.SCI_GETCURRENTPOS)
+        )
         self.SendScintilla(self.SCI_SETSTYLING, len(text), style)
         self.insert(text)
-        
+
     def render_inline_plot(self):
         """Captures the current matplotlib figure and displays it inline as a QLabel."""
         if not plt.get_fignums():
@@ -260,11 +353,12 @@ class ScintillaConsole(QsciScintilla):
 
         fig = plt.gcf()
         self.plot_window.update_plot(fig)
-        plt.close(fig)  # prevent external popup
+        #plt.close(fig)  # prevent external popup
+
 
 class PlotWindow(QWidget):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent = None):
+        super().__init__(parent)
         self.setWindowTitle("Inline Plot Viewer")
         self.setGeometry(200, 200, 800, 600)
 
@@ -289,37 +383,58 @@ class PlotWindow(QWidget):
         self.showNormal()
         self.raise_()
         self.activateWindow()
-    
+
     def closeEvent(self, event):
-        event.ignore()        # Prevent destruction
-        self.hide()           # Just hide the window instead
+        event.ignore()  # Prevent destruction
+        self.hide()  # Just hide the window instead
 
-class IPythonConsoleApp(QMainWindow):
-    def __init__(self, parent_name : str = "", geometry : list = []):
-        super().__init__()
-        self.parent_window_name = parent_name
-        
-        if len(parent_name)>0:
-            self.setWindowTitle(" ".join([self.parent_window_name, "Python Console"])
-        else:
-            self.setWindowTitle("Python Console")
-            
-        if len(geometry)!=4:
-            self.geometry = [100, 100, 1000, 700]
-        else:
-            self.geomtry = geometry
-        self.setGeometry(*self.geometry)
+class ConsolePanel(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.console = ScintillaConsole(self)
 
-        widget = QWidget()
         layout = QVBoxLayout()
-        widget.setLayout(layout)
-        self.setCentralWidget(widget)
-
-        self.console = ScintillaConsole(">>> ")
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.console)
+        self.setLayout(layout)
+
+class ConsoleDock(QDockWidget):
+    def __init__(self, title, parent = None):
+        super().__init__(title, parent)
+        
+    def closeEvent(self, event):
+        self.setFloating(False)
+        self.parent().addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self)
+        event.ignore()
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Main Application with Docked Python Console")
+        self.setGeometry(100, 100, 1200, 800)
+
+        # Central widget (placeholder for main content)
+        self.editor = QTextEdit()
+        self.editor.setPlainText("This is the main application area.")
+        self.setCentralWidget(self.editor)
+
+        # Console dock
+        self.console_dock = ConsoleDock("Python Console", self)
+        self.console_panel = ConsolePanel()
+        self.console_dock.setWidget(self.console_panel)
+        self.console_dock.setAllowedAreas(
+            Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        self.console_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetClosable |
+            QDockWidget.DockWidgetFeature.DockWidgetMovable |
+            QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        )
+
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.console_dock)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = IPythonConsoleApp("main", [100, 100, 1000, 700])
+    window = MainWindow()
     window.show()
     sys.exit(app.exec())
