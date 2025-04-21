@@ -8,27 +8,40 @@ from IPython.utils.capture import capture_output
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from PyQt6.Qsci import QsciAPIs, QsciLexerPython, QsciScintilla
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QImage, QKeyEvent, QPixmap, QColor, QPalette
-from PyQt6.QtWidgets import (QApplication, QLabel, QMainWindow, QVBoxLayout,
-                             QWidget, QDockWidget, QTextEdit)
+from PyQt6.QtGui import QColor, QFont, QImage, QKeyEvent, QPalette, QPixmap
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDockWidget,
+    QLabel,
+    QMainWindow,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class ScintillaConsole(QsciScintilla):
     # Regex to match ANSI escape sequences (like \x1b[31m)
     ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
-    def __init__(self, parent = None, prompt_str : str = ">>> ", welcome_message :str = "QNEP IPython console\n", color_theme : str ='dark'):
-        super().__init__(parent = parent)
+    def __init__(
+        self,
+        parent=None,
+        prompt_str: str = ">>> ",
+        welcome_message: str = "QNEP IPython console\n",
+        color_theme: str = "dark",
+    ):
+        super().__init__(parent=parent)
 
         self.prompt_str = prompt_str
         self.plot_window = PlotWindow(parent=self.parent())
         self.plot_window.hide()
-        
+
         self.color_theme = color_theme
         # --- Core background colors
         bg_color = QColor("#1e1e1e")
         fg_color = QColor("#dcdcdc")
-        
+
         # IPython shell setup
         self.shell = InteractiveShell.instance()
         self.user_ns = self.shell.user_ns
@@ -39,24 +52,24 @@ class ScintillaConsole(QsciScintilla):
         font = QFont("Consolas", 12)
         self.setFont(font)
         self.setMarginsFont(font)
-        
+
         # Basic colors
         self.setCaretLineVisible(True)
         self.setCaretLineBackgroundColor(Qt.GlobalColor.darkGray)
 
-        self.setColor(Qt.GlobalColor.white)            # default text
-        self.setPaper(Qt.GlobalColor.black)            # background
-        
+        self.setColor(Qt.GlobalColor.white)  # default text
+        self.setPaper(Qt.GlobalColor.black)  # background
+
         # Editor text area and margins
-        self.setPaper(bg_color)                       # Text area
-        self.setColor(fg_color)                       # Default text
+        self.setPaper(bg_color)  # Text area
+        self.setColor(fg_color)  # Default text
         self.setMarginsBackgroundColor(bg_color)
         self.setMarginsForegroundColor(QColor("#888"))  # Line numbers
-        #self.setMarginsBackgroundColor(Qt.GlobalColor.black)
-        #self.setMarginsForegroundColor(Qt.GlobalColor.lightGray)
+        # self.setMarginsBackgroundColor(Qt.GlobalColor.black)
+        # self.setMarginsForegroundColor(Qt.GlobalColor.lightGray)
 
         self.setMarginLineNumbers(1, True)
-        
+
         # Set background of whole widget (scrollbars etc)
         palette = self.palette()
         palette.setColor(QPalette.ColorRole.Base, bg_color)
@@ -69,7 +82,7 @@ class ScintillaConsole(QsciScintilla):
         # Syntax highlighting
         self.lexer = QsciLexerPython()
         self.lexer.setDefaultFont(font)
-        
+
         # Background & default
         self.lexer.setPaper(Qt.GlobalColor.black)
         self.lexer.setColor(Qt.GlobalColor.white)  # default text
@@ -96,11 +109,11 @@ class ScintillaConsole(QsciScintilla):
 
         self.STYLE_STDERR = 128
         self.SendScintilla(self.SCI_STYLESETFONT, self.STYLE_STDERR, b"Courier")
-        self.SendScintilla(self.SCI_STYLESETSIZE, self.STYLE_STDERR, 12)        
+        self.SendScintilla(self.SCI_STYLESETSIZE, self.STYLE_STDERR, 12)
         self.SendScintilla(self.SCI_STYLESETBACK, self.STYLE_STDERR, QColor("#1e1e1e"))
         self.SendScintilla(self.SCI_STYLESETFORE, self.STYLE_STDERR, QColor("red"))
-        
-        if self.color_theme == 'light':
+
+        if self.color_theme == "light":
             self.set_light_theme()
         else:
             self.set_dark_theme()
@@ -173,7 +186,7 @@ class ScintillaConsole(QsciScintilla):
         self.lexer.setColor(QColor("#795E26"), QsciLexerPython.FunctionMethodName)
         self.lexer.setColor(QColor("#000000"), QsciLexerPython.Operator)
         self.lexer.setColor(QColor("#AF00DB"), QsciLexerPython.Decorator)
-        
+
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
         modifiers = event.modifiers()
@@ -353,11 +366,11 @@ class ScintillaConsole(QsciScintilla):
 
         fig = plt.gcf()
         self.plot_window.update_plot(fig)
-        #plt.close(fig)  # prevent external popup
+        # plt.close(fig)  # prevent external popup
 
 
 class PlotWindow(QWidget):
-    def __init__(self, parent = None):
+    def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Inline Plot Viewer")
         self.setGeometry(200, 200, 800, 600)
@@ -388,6 +401,7 @@ class PlotWindow(QWidget):
         event.ignore()  # Prevent destruction
         self.hide()  # Just hide the window instead
 
+
 class ConsolePanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -398,14 +412,16 @@ class ConsolePanel(QWidget):
         layout.addWidget(self.console)
         self.setLayout(layout)
 
+
 class ConsoleDock(QDockWidget):
-    def __init__(self, title, parent = None):
+    def __init__(self, title, parent=None):
         super().__init__(title, parent)
-        
+
     def closeEvent(self, event):
         self.setFloating(False)
         self.parent().addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self)
         event.ignore()
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -423,15 +439,17 @@ class MainWindow(QMainWindow):
         self.console_panel = ConsolePanel()
         self.console_dock.setWidget(self.console_panel)
         self.console_dock.setAllowedAreas(
-            Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+            Qt.DockWidgetArea.BottomDockWidgetArea
+            | Qt.DockWidgetArea.RightDockWidgetArea
         )
         self.console_dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetClosable |
-            QDockWidget.DockWidgetFeature.DockWidgetMovable |
-            QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
+            | QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
         )
 
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.console_dock)
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
