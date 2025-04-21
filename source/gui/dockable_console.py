@@ -3,6 +3,8 @@ import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+import sklearn as skl
 from IPython.core.interactiveshell import InteractiveShell
 from IPython.utils.capture import capture_output
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -26,10 +28,10 @@ class ScintillaConsole(QsciScintilla):
 
     def __init__(
         self,
-        parent=None,
-        prompt_str: str = ">>> ",
-        welcome_message: str = "QNEP IPython console\n",
-        color_theme: str = "dark",
+        parent: QWidget,
+        prompt_str: str,
+        welcome_message: str,
+        color_theme: str,
     ):
         super().__init__(parent=parent)
 
@@ -45,7 +47,7 @@ class ScintillaConsole(QsciScintilla):
         # IPython shell setup
         self.shell = InteractiveShell.instance()
         self.user_ns = self.shell.user_ns
-        self.user_ns.update({"np": np, "plt": plt})
+        self.user_ns.update({"np": np, "plt": plt, "pd": pd, "skl": skl})
 
         # Editor look
         self.setUtf8(True)
@@ -65,8 +67,6 @@ class ScintillaConsole(QsciScintilla):
         self.setColor(fg_color)  # Default text
         self.setMarginsBackgroundColor(bg_color)
         self.setMarginsForegroundColor(QColor("#888"))  # Line numbers
-        # self.setMarginsBackgroundColor(Qt.GlobalColor.black)
-        # self.setMarginsForegroundColor(Qt.GlobalColor.lightGray)
 
         self.setMarginLineNumbers(1, True)
 
@@ -103,12 +103,13 @@ class ScintillaConsole(QsciScintilla):
 
         # Prompt management
         self.appendText(welcome_message)
+        self.appendText("# The following modules have been imported: numpy as np, matplotlib.pyplot as plt, pandas as pd, sklearn as skl\n")
         self.appendText("\n")
         self.appendText(self.prompt_str)
         self.prompt_line = self.lines() - 1
 
         self.STYLE_STDERR = 128
-        self.SendScintilla(self.SCI_STYLESETFONT, self.STYLE_STDERR, b"Courier")
+        self.SendScintilla(self.SCI_STYLESETFONT, self.STYLE_STDERR, b"Consolas")
         self.SendScintilla(self.SCI_STYLESETSIZE, self.STYLE_STDERR, 12)
         self.SendScintilla(self.SCI_STYLESETBACK, self.STYLE_STDERR, QColor("#1e1e1e"))
         self.SendScintilla(self.SCI_STYLESETFORE, self.STYLE_STDERR, QColor("red"))
@@ -403,9 +404,20 @@ class PlotWindow(QWidget):
 
 
 class ConsolePanel(QWidget):
-    def __init__(self, parent=None):
+    def __init__(
+        self,
+        parent=None,
+        prompt_str: str = ">>> ",
+        welcome_message: str = "# QNEP IPython console\n",
+        color_theme: str = "dark",
+    ):
         super().__init__(parent)
-        self.console = ScintillaConsole(self)
+        self.console = ScintillaConsole(
+            self,
+            prompt_str=prompt_str,
+            welcome_message=welcome_message,
+            color_theme=color_theme,
+        )
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
