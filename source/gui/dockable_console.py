@@ -68,7 +68,7 @@ class ScintillaConsole(QsciScintilla):
         self.setMarginsBackgroundColor(bg_color)
         self.setMarginsForegroundColor(QColor("#888"))  # Line numbers
 
-        self.setMarginLineNumbers(1, True)
+        #self.setMarginLineNumbers(1, True)
 
         # Set background of whole widget (scrollbars etc)
         palette = self.palette()
