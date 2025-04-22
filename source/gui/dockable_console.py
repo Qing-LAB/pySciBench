@@ -1,27 +1,22 @@
 import re
 import sys
 
+import matplotlib
+matplotlib.use('QtAgg', force=True)
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import sklearn as skl
-from IPython.core.interactiveshell import InteractiveShell
+from IPython.terminal.interactiveshell import TerminalInteractiveShell
 from IPython.utils.capture import capture_output
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from plot_window import PlotWindow
 from PyQt6.Qsci import QsciAPIs, QsciLexerPython, QsciScintilla
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont, QImage, QKeyEvent, QPalette, QPixmap
-from PyQt6.QtWidgets import (
-    QApplication,
-    QDockWidget,
-    QLabel,
-    QMainWindow,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
-)
-from plot_window import PlotWindow
+from PyQt6.QtWidgets import (QApplication, QDockWidget, QLabel, QMainWindow,
+                             QTextEdit, QVBoxLayout, QWidget)
 
+from plot_window import PlotWindow
 class ScintillaConsole(QsciScintilla):
     # Regex to match ANSI escape sequences (like \x1b[31m)
     ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -38,6 +33,7 @@ class ScintillaConsole(QsciScintilla):
         self.prompt_str = prompt_str
         self.plot_window = PlotWindow(parent=self.window())
         self.plot_window.hide()
+        self.plot_window.figure_switched.connect(self._on_figure_switched)
 
         self.color_theme = color_theme
         # --- Core background colors
@@ -45,9 +41,28 @@ class ScintillaConsole(QsciScintilla):
         fg_color = QColor("#dcdcdc")
 
         # IPython shell setup
-        self.shell = InteractiveShell.instance()
+        self.shell = TerminalInteractiveShell.instance()
+        self.install_display_hook()
+        self.shell.enable_matplotlib(gui='qt')
+        self.shell.run_line_magic("matplotlib", "qt")  # safe now
+        from IPython.core.getipython import get_ipython
+        ip = get_ipython()
+        ip.display_formatter.active_types = ['text/plain', 'text/html']
+        
+        plt.ioff()
+        plt.show = lambda *a, **kw: None # prevent GUI popups from matplotlib
+
         self.user_ns = self.shell.user_ns
-        self.user_ns.update({"np": np, "plt": plt, "pd": pd, "skl": skl})
+        from IPython.display import display
+        self.user_ns["display"] = display
+
+        self.user_ns.update({
+            "np": np,
+            "pd": pd,
+            "plt": plt,
+            "skl": skl,
+            "display": display
+        })
 
         # Editor look
         self.setUtf8(True)
@@ -115,6 +130,13 @@ class ScintillaConsole(QsciScintilla):
         self.SendScintilla(self.SCI_STYLESETSIZE, self.STYLE_STDERR, 12)
         self.SendScintilla(self.SCI_STYLESETBACK, self.STYLE_STDERR, QColor("#1e1e1e"))
         self.SendScintilla(self.SCI_STYLESETFORE, self.STYLE_STDERR, QColor("red"))
+
+        self.STYLE_SYSTEM = 129
+        self.SendScintilla(self.SCI_STYLESETFONT, self.STYLE_SYSTEM, b"Consolas")
+        self.SendScintilla(self.SCI_STYLESETSIZE, self.STYLE_SYSTEM, 12)
+        self.SendScintilla(self.SCI_STYLESETFORE, self.STYLE_SYSTEM, QColor("#888888"))  # Light gray
+        self.SendScintilla(self.SCI_STYLESETITALIC, self.STYLE_SYSTEM, True)
+        self.SendScintilla(self.SCI_STYLESETBACK, self.STYLE_SYSTEM, QColor("#1e1e1e"))  # Match dark bg
 
         if self.color_theme == "light":
             self.set_light_theme()
@@ -281,6 +303,68 @@ class ScintillaConsole(QsciScintilla):
         # If none of the above, allow normal behavior
         super().keyPressEvent(event)
 
+    def insert_system_message(self, message: str):
+        self.moveCursorToEnd()
+        self.SendScintilla(
+            self.SCI_STARTSTYLING, self.SendScintilla(self.SCI_GETCURRENTPOS)
+        )
+        self.SendScintilla(self.SCI_SETSTYLING, len(message), self.STYLE_SYSTEM)
+        self.insert(message)
+
+    def insert_message_above_prompt(self, message: str):
+        total_lines = self.lines()
+
+        # Extract only user-typed input after the prompt (excluding prompt prefix like ">>> ")
+        input_lines = []
+        for i in range(self.prompt_line, total_lines):
+            line_text = self.text(i)
+            if line_text.startswith(self.prompt_str):
+                input_lines.append(line_text[len(self.prompt_str):])
+            else:
+                input_lines.append(line_text)
+        user_input = "\n".join(input_lines).rstrip()
+
+        # Remove prompt + current input
+        last_line_index = len(self.text(self.lines() - 1))
+        self.setSelection(self.prompt_line, 0, self.lines() - 1, last_line_index)
+        self.removeSelectedText()
+
+        # Insert the system message in styled form
+        self.appendText("\n")
+        self.insert_system_message(f"{message}\n")
+
+        # Re-insert prompt and original user input
+        self.appendText(self.prompt_str)
+        self.prompt_line = self.lines() - 1
+        if user_input:
+            self.insert(user_input)
+            self.moveCursorToEnd()
+
+    def ensure_active_figure(self):
+        if plt.get_fignums() == []:
+            plt.figure()
+
+    def install_display_hook(self):
+        from IPython.core.interactiveshell import InteractiveShell
+
+        shell = self.shell
+
+        def custom_displayhook(result):
+            if result is not None:
+                # Save _ and _N variables
+                shell.user_ns["_"] = result
+                shell.user_ns[f"_{shell.execution_count}"] = result
+
+                # Format the output
+                formatted = shell.display_formatter.format(result)
+                if "text/plain" in formatted[0]:
+                    text_output = formatted[0]["text/plain"]
+                    self.appendText("\n" + text_output + "\n")
+
+        shell.displayhook.write_output_prompt = lambda: None
+        shell.displayhook.write_format_data = lambda data, fmt=None: None  # suppress default
+        shell.displayhook.__call__ = custom_displayhook
+        
     def run_current_input(self):
         # Extract code from the current prompt line to end
         total_lines = self.lines()
@@ -302,11 +386,19 @@ class ScintillaConsole(QsciScintilla):
             self.appendText("\n... ")
             return
 
+        self.ensure_active_figure()
+        before_plt = set(plt.get_fignums())
+
         with capture_output() as captured:
             try:
                 self.shell.run_cell(code, store_history=True)
             except Exception as e:
                 print(f"Error: {e}")
+
+        after_plt = set(plt.get_fignums())
+        closed_plt = before_plt - after_plt
+        for fig_num in closed_plt:
+            self.plot_window.mark_figure_closed(fig_num)
 
         stdout = captured.stdout
         stderr = captured.stderr
@@ -316,10 +408,12 @@ class ScintillaConsole(QsciScintilla):
             self.appendTextStyled(
                 ScintillaConsole.remove_ansi_codes(stderr), self.STYLE_STDERR
             )
-        self.appendText("\n" + self.prompt_str)
-        self.prompt_line = self.lines() - 1
+                
         self.update_autocompletions()
         self.render_inline_plot()
+
+        self.appendText("\n")
+        self.reset_prompt()
         self.setFocus()
 
     def appendText(self, text: str):
@@ -348,6 +442,10 @@ class ScintillaConsole(QsciScintilla):
         index = len(self.text(line))
         self.setCursorPosition(line, index)
         self.ensureLineVisible(line)
+
+    def reset_prompt(self):
+        self.appendText(self.prompt_str)
+        self.prompt_line = self.lines() - 1
 
     def update_autocompletions(self):
         """Safely updates the API list for autocompletion using the current IPython namespace."""
@@ -379,10 +477,26 @@ class ScintillaConsole(QsciScintilla):
         if not plt.get_fignums():
             self.plot_window.hide()
             return
-        print("render inline figure...")
+        
         fig = plt.gcf()
-        self.plot_window.update_plot(fig)
-        # plt.close(fig)  # prevent external popup
+        fig_num = fig.number
+
+        if not fig.get_axes():
+            return
+    
+        if self.plot_window.has_figure(fig_num):
+            self.plot_window.refresh_figure_tab(fig)
+        else:
+            added = self.plot_window.add_figure(fig)
+
+            if added:
+                self.plot_window.showNormal()
+                self.plot_window.raise_()
+                self.plot_window.activateWindow()
+
+    def _on_figure_switched(self, fig_num):
+        plt.figure(num=fig_num)
+        self.insert_message_above_prompt(f"# Switched to Figure {fig_num}")
 
 
 class ConsolePanel(QWidget):
@@ -448,7 +562,19 @@ class MainWindow(QMainWindow):
         )
 
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.console_dock)
+        sys.stdout = ConsoleOutputStream(self.appendText)
+        sys.stderr = ConsoleOutputStream(lambda text: self.appendTextStyled(text, self.STYLE_STDERR))
 
+class ConsoleOutputStream:
+    def __init__(self, append_func):
+        self.append = append_func
+
+    def write(self, text):
+        if text.strip():
+            self.append(text)
+
+    def flush(self):
+        pass  # No-op for compatibility
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
