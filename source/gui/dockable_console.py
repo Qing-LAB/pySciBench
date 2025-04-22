@@ -11,9 +11,16 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from PyQt6.Qsci import QsciAPIs, QsciLexerPython, QsciScintilla
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont, QImage, QKeyEvent, QPalette, QPixmap
-from PyQt6.QtWidgets import (QApplication, QDockWidget, QLabel, QMainWindow,
-                             QTextEdit, QVBoxLayout, QWidget)
-
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDockWidget,
+    QLabel,
+    QMainWindow,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+from plot_window import PlotWindow
 
 class ScintillaConsole(QsciScintilla):
     # Regex to match ANSI escape sequences (like \x1b[31m)
@@ -376,43 +383,6 @@ class ScintillaConsole(QsciScintilla):
         fig = plt.gcf()
         self.plot_window.update_plot(fig)
         # plt.close(fig)  # prevent external popup
-
-
-class PlotWindow(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-
-        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
-        self.setWindowModality(Qt.WindowModality.NonModal)
-        self.setWindowTitle("Inline Plot Viewer")
-        self.setGeometry(200, 200, 800, 600)
-
-        self.label = QLabel()
-        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        layout = QVBoxLayout()
-        layout.addWidget(self.label)
-        self.setLayout(layout)
-
-    def update_plot(self, fig):
-        canvas = FigureCanvas(fig)
-        canvas.draw()
-
-        width, height = fig.get_size_inches() * fig.dpi
-        img = canvas.buffer_rgba()
-        qimg = QImage(img, int(width), int(height), QImage.Format.Format_RGBA8888)
-        pixmap = QPixmap.fromImage(qimg)
-
-        self.label.setPixmap(pixmap)
-        self.resize(pixmap.width(), pixmap.height())
-        print("the plot window should show up now")
-        self.showNormal()
-        self.raise_()
-        self.activateWindow()
-
-    def closeEvent(self, event):
-        event.ignore()  # Prevent destruction
-        self.hide()  # Just hide the window instead
 
 
 class ConsolePanel(QWidget):
