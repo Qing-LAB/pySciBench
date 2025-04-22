@@ -11,15 +11,8 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from PyQt6.Qsci import QsciAPIs, QsciLexerPython, QsciScintilla
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont, QImage, QKeyEvent, QPalette, QPixmap
-from PyQt6.QtWidgets import (
-    QApplication,
-    QDockWidget,
-    QLabel,
-    QMainWindow,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
-)
+from PyQt6.QtWidgets import (QApplication, QDockWidget, QLabel, QMainWindow,
+                             QTextEdit, QVBoxLayout, QWidget)
 
 
 class ScintillaConsole(QsciScintilla):
@@ -36,7 +29,7 @@ class ScintillaConsole(QsciScintilla):
         super().__init__(parent=parent)
 
         self.prompt_str = prompt_str
-        self.plot_window = PlotWindow(parent=self.parent())
+        self.plot_window = PlotWindow(parent=self.window())
         self.plot_window.hide()
 
         self.color_theme = color_theme
@@ -68,7 +61,7 @@ class ScintillaConsole(QsciScintilla):
         self.setMarginsBackgroundColor(bg_color)
         self.setMarginsForegroundColor(QColor("#888"))  # Line numbers
 
-        #self.setMarginLineNumbers(1, True)
+        # self.setMarginLineNumbers(1, True)
 
         # Set background of whole widget (scrollbars etc)
         palette = self.palette()
@@ -103,7 +96,9 @@ class ScintillaConsole(QsciScintilla):
 
         # Prompt management
         self.appendText(welcome_message)
-        self.appendText("# The following modules have been imported: numpy as np, matplotlib.pyplot as plt, pandas as pd, sklearn as skl\n")
+        self.appendText(
+            "# The following modules have been imported: \n# numpy as np, matplotlib.pyplot as plt, pandas as pd, sklearn as skl\n"
+        )
         self.appendText("\n")
         self.appendText(self.prompt_str)
         self.prompt_line = self.lines() - 1
@@ -192,6 +187,18 @@ class ScintillaConsole(QsciScintilla):
         key = event.key()
         modifiers = event.modifiers()
         cursor_line, cursor_index = self.getCursorPosition()
+
+        if key in (Qt.Key.Key_PageUp, Qt.Key.Key_PageDown):
+            super().keyPressEvent(event)  # allow normal scrolling
+            return
+
+        if cursor_line < self.prompt_line:
+            if event.text().isprintable() and len(event.text()) > 0 and not modifiers:
+                self.setSelection(-1, -1, -1, -1)
+                self.moveCursorToEnd()
+                self.insert(event.text())
+                self.moveCursorToEnd()
+                return
 
         # Prevent any editing above the prompt
         if self.hasSelectedText():
@@ -306,6 +313,7 @@ class ScintillaConsole(QsciScintilla):
         self.prompt_line = self.lines() - 1
         self.update_autocompletions()
         self.render_inline_plot()
+        self.setFocus()
 
     def appendText(self, text: str):
         self.setText(self.text() + text)
@@ -364,7 +372,7 @@ class ScintillaConsole(QsciScintilla):
         if not plt.get_fignums():
             self.plot_window.hide()
             return
-
+        print("render inline figure...")
         fig = plt.gcf()
         self.plot_window.update_plot(fig)
         # plt.close(fig)  # prevent external popup
@@ -373,6 +381,9 @@ class ScintillaConsole(QsciScintilla):
 class PlotWindow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
+        self.setWindowModality(Qt.WindowModality.NonModal)
         self.setWindowTitle("Inline Plot Viewer")
         self.setGeometry(200, 200, 800, 600)
 
@@ -394,6 +405,7 @@ class PlotWindow(QWidget):
 
         self.label.setPixmap(pixmap)
         self.resize(pixmap.width(), pixmap.height())
+        print("the plot window should show up now")
         self.showNormal()
         self.raise_()
         self.activateWindow()
@@ -448,7 +460,12 @@ class MainWindow(QMainWindow):
 
         # Console dock
         self.console_dock = ConsoleDock("Python Console", self)
-        self.console_panel = ConsolePanel()
+        self.console_panel = ConsolePanel(
+            self.console_dock,
+            ">>> ",
+            "# Welcome to pyElecular Python Console.\n",
+            "light",
+        )
         self.console_dock.setWidget(self.console_panel)
         self.console_dock.setAllowedAreas(
             Qt.DockWidgetArea.BottomDockWidgetArea

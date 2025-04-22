@@ -14,6 +14,7 @@ from multiprocessing.shared_memory import SharedMemory
 import numpy as np
 import psutil
 
+
 def listener_configurer(logfilename: str):
     root = logging.getLogger()
     file_handler = logging.handlers.RotatingFileHandler(logfilename, "a", 300, 10)
@@ -53,12 +54,14 @@ def worker_process(queue):
         innerlogger = logging.getLogger("worker")
         innerlogger.info(f"Logging a random number {randint(0, 10)}")
 
+
 # Forward declaration for class DAQTaskManager
 class DAQTaskManager:
     class TaskContext:
         pass
 
     pass
+
 
 class DAQBaseClass:
     """The base class for all DAQ handlers.
@@ -147,7 +150,7 @@ class DAQBaseClass:
     def ContinueTask(cls, lock: Lock, task_context: DAQTaskManager.TaskContext) -> int:
         print("Continue Task")
         return 0
-    
+
     @classmethod
     def StopTask(cls, lock: Lock, task_manager: DAQTaskManager.TaskContext) -> int:
         print("Base StopTask called")
@@ -467,7 +470,7 @@ class DAQTaskManager:
     @property
     def shared_memory_info(self) -> dict:
         return self.context.task_info["shared_memory_info"]
-    
+
     @property
     def task_params(self) -> dict:
         if self.context.task_info.has_key("task_params"):
@@ -478,7 +481,6 @@ class DAQTaskManager:
     def config_task(self, task_params: dict) -> int:
         self.context.task_info["task_params"] = task_params
         self.DAQBoard.ConfigTask(task_params=task_params, task_manager=self)
-        
 
     def init_task(self) -> int:
         self.DAQBoard.InitTask(self.lock, self.context)
@@ -574,7 +576,9 @@ if __name__ == "__main__":
         )
         """
         if task.context.get_status() != DAQTASK_STATUS.RUNNING:
-            print(f"main proc detected that child process is no longer in running state... will quit now... {task.context.get_command()}, status: {task.context.get_status()}, i: {i}")
+            print(
+                f"main proc detected that child process is no longer in running state... will quit now... {task.context.get_command()}, status: {task.context.get_status()}, i: {i}"
+            )
             break
         if i == 100000:
             task.context.set_command(2)
