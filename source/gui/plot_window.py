@@ -10,9 +10,16 @@ from PyQt6.QtWidgets import (QApplication, QFileDialog, QListWidget,
                              QListWidgetItem, QMainWindow, QMenu, QMessageBox,
                              QTextEdit, QVBoxLayout, QWidget)
 
-
-# --- FigureWindow: one floating window per figure ---
 class FigureWindow(QMainWindow):
+    """This window class shows one figure as a separate window. When the user
+    closes the figure window, the parent will be notified to keep track of the
+    status of individual figures.
+
+    Args:
+        parent : 
+            parent window that will receive notification when the user closes
+            the figure window.
+    """
     def __init__(self, fig: Figure, parent=None):
         super().__init__(parent)
         self.fig = fig
@@ -23,12 +30,34 @@ class FigureWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self.parent() is not None:
-            self.parent().notify_figure_window_closed(self.fig.number)
+            if hasattr(self.parent(), 'notify_figure_window_closed'):
+                self.parent().notify_figure_window_closed(self.fig.number)
         super().closeEvent(event)
 
 
 # --- PlotWindow: main plot manager window ---
 class PlotWindow(QMainWindow):
+    """This is the Matplotlib figure manager. Overall it will list the existing 
+    matplotlib.pyplot figures, and display the info associated with each figure.
+    For listed figures, if the figure has been closed by the function call 
+    plt.close(), the status will be shown as (closed). Otherwise the figure
+    will be marked as not closed. When clicking the figure that is not closed, 
+    a call to plt.figure(fig_num) will be made such that the later call to 
+    pyplot functions will modify this "active" figure.
+    Double click the figure will bring up the figure as a separate window.
+    In addition, the window provides save function to export the figure into 
+    PNG, PDF or SVG formats.
+
+    Args:
+        parent : 
+            give the parent object for this window.
+        allow_full_close : 
+            if True, when the user clicks the close button of the window,
+            the window will be closed. Otherwise, the window will only
+            hide and the parent/user can bring the window shown/active again
+            later by calling the function show_window()        
+
+    """
     figure_switched = pyqtSignal(int)
 
     def __init__(self, parent=None, allow_full_close=False):
