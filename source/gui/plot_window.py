@@ -1,147 +1,258 @@
-from PyQt6.QtWidgets import (
-    QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QToolBar, QFileDialog,
-    QMainWindow, QMenuBar, QMenu, QMessageBox
-)
-from PyQt6.QtGui import QIcon, QAction
-from PyQt6.QtCore import Qt, pyqtSignal
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
-from matplotlib.figure import Figure
+import sys
+
 import matplotlib.pyplot as plt
-import os
+import numpy as np
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (QApplication, QFileDialog, QListWidget,
+                             QListWidgetItem, QMainWindow, QMenu, QMessageBox,
+                             QTextEdit, QVBoxLayout, QWidget)
 
-class PlotWindow(QMainWindow):
-    figure_switched = pyqtSignal(int)  # Emit figure number on tab change
 
-    def __init__(self, parent=None):
+# --- FigureWindow: one floating window per figure ---
+class FigureWindow(QMainWindow):
+    def __init__(self, fig: Figure, parent=None):
         super().__init__(parent)
+        self.fig = fig
+        self.canvas = FigureCanvas(fig)
+        self.setCentralWidget(self.canvas)
+        self.setWindowTitle(f"Figure {fig.number}")
+        self.setGeometry(300, 300, 600, 400)
 
-        self.setWindowTitle("Plot Viewer")
-        self.setGeometry(200, 200, 900, 700)
-        self.setWindowFlags(
-            Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint
-        )
+    def closeEvent(self, event):
+        if self.parent() is not None:
+            self.parent().notify_figure_window_closed(self.fig.number)
+        super().closeEvent(event)
 
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setTabsClosable(True)
-        self.setCentralWidget(self.tab_widget)
-        self.tab_widget.currentChanged.connect(self._on_tab_changed)
-        self.tab_widget.tabCloseRequested.connect(self._on_tab_close_requested)
 
-        self._figures = []  # List of tuples: (fig_num, Figure, canvas, toolbar)
-        self._closed_figures = set()  # Track closed figures
-        self._setup_menu()
+# --- PlotWindow: main plot manager window ---
+class PlotWindow(QMainWindow):
+    figure_switched = pyqtSignal(int)
 
-    def _setup_menu(self):
-        menubar = QMenuBar(self)
-        file_menu = QMenu("File", self)
+    def __init__(self, parent=None, allow_full_close=False):
+        super().__init__(parent)
+        self.setWindowTitle("Plot Manager")
+        self.setGeometry(100, 100, 400, 600)
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
 
-        self.save_png_action = QAction("Save as PNG", self)
-        self.save_svg_action = QAction("Save as SVG", self)
-        self.save_pdf_action = QAction("Save as PDF", self)
+        self.allow_full_close = allow_full_close
 
-        self.save_png_action.triggered.connect(lambda: self._save_current_figure("png"))
-        self.save_svg_action.triggered.connect(lambda: self._save_current_figure("svg"))
-        self.save_pdf_action.triggered.connect(lambda: self._save_current_figure("pdf"))
+        self.list_widget = QListWidget()
+        self.info_window = QTextEdit()
+        self.info_window.setReadOnly(True)
 
-        file_menu.addAction(self.save_png_action)
-        file_menu.addAction(self.save_svg_action)
-        file_menu.addAction(self.save_pdf_action)
-        menubar.addMenu(file_menu)
-
-        self.setMenuBar(menubar)
-
-    def has_figure(self, fig_num: int) -> bool:
-        return any(fnum == fig_num for fnum, _, _, _ in self._figures)
-
-    def add_figure(self, fig: Figure) -> bool:
-        fig_num = fig.number
-        if self.has_figure(fig_num):
-            return False  # Already exists, handled elsewhere
-
-        canvas = FigureCanvasQTAgg(fig)
-        toolbar = NavigationToolbar2QT(canvas, self)
-
-        container = QWidget()
         layout = QVBoxLayout()
-        layout.setContentsMargins(2, 2, 2, 2)
-        layout.setSpacing(2)
-        layout.addWidget(toolbar)
-        layout.addWidget(canvas)
-        container.setLayout(layout)
+        layout.addWidget(self.list_widget)
+        layout.addWidget(self.info_window)
 
-        tab_name = f"Figure {fig_num}"
-        self.tab_widget.addTab(container, tab_name)
-        self._figures.append((fig_num, fig, canvas, toolbar))
-        self.tab_widget.setCurrentIndex(self.tab_widget.count() - 1)
+        main_widget = QWidget()
+        main_widget.setLayout(layout)
+        self.setCentralWidget(main_widget)
 
-        return True
+        self.figure_windows = {}  # fig_num -> FigureWindow
+        self.figures_status = {}  # fig_num -> bool (open/closed)
+        self.figures_refs = {}  # fig_num -> Figure
+        self.active_figure_num = None
 
-    def refresh_figure_tab(self, fig: Figure):
+        self.list_widget.itemClicked.connect(self._on_figure_selected)
+        self.list_widget.itemDoubleClicked.connect(self._on_figure_double_clicked)
+        self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.list_widget.customContextMenuRequested.connect(self._open_context_menu)
+
+    def add_figure(self, fig: Figure):
         fig_num = fig.number
-        for i, (fnum, _, old_canvas, old_toolbar) in enumerate(self._figures):
-            if fnum == fig_num:
-                new_canvas = FigureCanvasQTAgg(fig)
-                new_toolbar = NavigationToolbar2QT(new_canvas, self)
-
-                tab_widget = self.tab_widget.widget(i)
-                layout = tab_widget.layout()
-
-                # Disconnect the old toolbar safely to avoid runtime errors
-                if old_toolbar:
-                    old_toolbar.setParent(None)
-                    old_toolbar.deleteLater()
-                if old_canvas:
-                    old_canvas.setParent(None)
-                    old_canvas.deleteLater()
-
-                layout.addWidget(new_toolbar)
-                layout.addWidget(new_canvas)
-
-                self._figures[i] = (fig_num, fig, new_canvas, new_toolbar)
-                new_canvas.draw()
-                break
-
-    def _save_current_figure(self, fmt: str):
-        current_index = self.tab_widget.currentIndex()
-        if current_index < 0 or current_index >= len(self._figures):
+        if fig_num in self.figures_refs:
             return
 
-        fig_num, fig, _, _ = self._figures[current_index]
-        default_name = f"figure_{fig_num}.{fmt}"
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, f"Save as {fmt.upper()}", default_name, f"*.{fmt}"
-        )
-        if file_path:
-            fig.savefig(file_path, format=fmt)
-
-    def _on_tab_changed(self, index):
-        if 0 <= index < len(self._figures):
-            fig_num, _, _, _ = self._figures[index]
-            if fig_num not in self._closed_figures:
-                self.figure_switched.emit(fig_num)
-
-    def _on_tab_close_requested(self, index):
-        if 0 <= index < len(self._figures):
-            widget = self.tab_widget.widget(index)
-            self.tab_widget.removeTab(index)
-            if widget:
-                widget.deleteLater()
-
-    def get_active_figure(self):
-        index = self.tab_widget.currentIndex()
-        if 0 <= index < len(self._figures):
-            fig_num, fig, _, _ = self._figures[index]
-            if fig_num not in self._closed_figures:
-                return fig
-        return None
-
-    def get_active_figure_num(self):
-        index = self.tab_widget.currentIndex()
-        if 0 <= index < len(self._figures):
-            fig_num, _, _, _ = self._figures[index]
-            if fig_num not in self._closed_figures:
-                return fig_num
-        return None
+        self.figures_refs[fig_num] = fig
+        self.figures_status[fig_num] = True
+        item = QListWidgetItem(f"Figure {fig_num}")
+        item.setForeground(QColor("green"))
+        item.setData(Qt.ItemDataRole.UserRole, fig_num)
+        self.list_widget.addItem(item)
 
     def mark_figure_closed(self, fig_num: int):
-        self._closed_figures.add(fig_num)
+        if fig_num in self.figures_status:
+            self.figures_status[fig_num] = False
+            for i in range(self.list_widget.count()):
+                item = self.list_widget.item(i)
+                if item.data(Qt.ItemDataRole.UserRole) == fig_num:
+                    item.setForeground(QColor("red"))
+                    item.setText(f"Figure {fig_num} (Closed)")
+
+    def _update_info_panel(self, fig_num: int):
+        if fig_num in self.figures_refs:
+            fig = self.figures_refs[fig_num]
+            text = f"""Figure {fig_num}\nAxes: {len(fig.get_axes())}\nClosed: {not self.figures_status.get(fig_num, True)}"""
+            self.info_window.setText(text)
+
+    def _on_figure_selected(self, item: QListWidgetItem):
+        fig_num = item.data(Qt.ItemDataRole.UserRole)
+        self._update_info_panel(fig_num)
+
+        if not self.figures_status.get(fig_num, False):
+            self.active_figure_num = None
+            # self.show_closed_figure_window(fig_num)
+        else:
+            fig = self.figures_refs[fig_num]
+            plt.figure(fig_num)
+            self.active_figure_num = fig_num
+            self.figure_switched.emit(fig_num)
+
+        self._update_active_marker()
+
+    def _on_figure_double_clicked(self, item: QListWidgetItem):
+        fig_num = item.data(Qt.ItemDataRole.UserRole)
+        if not self.figures_status.get(fig_num, False):
+            self.show_closed_figure_window(fig_num)
+        else:
+            self.active_figure_num = fig_num
+            self._update_active_marker()
+            self.show_active_figure_window()
+
+    def _open_context_menu(self, position):
+        menu = QMenu(self)
+        close_action = menu.addAction("Close Figure")
+        save_action = menu.addAction("Save Figure")
+
+        selected_item = self.list_widget.itemAt(position)
+        if selected_item is None:
+            return
+
+        fig_num = selected_item.data(Qt.ItemDataRole.UserRole)
+        action = menu.exec(self.list_widget.mapToGlobal(position))
+
+        if action == close_action:
+            self.mark_figure_closed(fig_num)
+        elif action == save_action:
+            self._save_figure(fig_num)
+
+    def _save_figure(self, fig_num: int):
+        if fig_num in self.figures_refs:
+            fig = self.figures_refs[fig_num]
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                f"Save Figure {fig_num}",
+                f"figure_{fig_num}",
+                "Images (*.png *.pdf *.svg)",
+            )
+            if file_path:
+                if file_path.endswith(".pdf"):
+                    fig.savefig(file_path, format="pdf")
+                elif file_path.endswith(".svg"):
+                    fig.savefig(file_path, format="svg")
+                else:
+                    fig.savefig(file_path, format="png")
+
+    def show_closed_figure_window(self, fig_num: int):
+        if fig_num in self.figure_windows:
+            window = self.figure_windows[fig_num]
+            window.showNormal()
+            window.raise_()
+            window.activateWindow()
+        else:
+            if fig_num in self.figures_refs:
+                fig = self.figures_refs[fig_num]
+                window = FigureWindow(fig, parent=self)
+                self.figure_windows[fig_num] = window
+                window.show()
+
+    def show_active_figure_window(self):
+        if self.active_figure_num is None:
+            return
+
+        fig_num = self.active_figure_num
+
+        if fig_num not in self.figure_windows:
+            if fig_num in self.figures_refs:
+                fig = self.figures_refs[fig_num]
+                window = FigureWindow(fig, parent=self)
+                self.figure_windows[fig_num] = window
+                window.show()
+        else:
+            window = self.figure_windows[fig_num]
+            window.showNormal()
+            window.raise_()
+            window.activateWindow()
+
+    def refresh_figure(self, fig: Figure):
+        fig_num = fig.number
+        self.figures_refs[fig_num] = fig
+        if fig_num in self.figure_windows:
+            window = self.figure_windows[fig_num]
+            window.canvas.draw()
+
+    def notify_figure_window_closed(self, fig_num: int):
+        if fig_num in self.figure_windows:
+            del self.figure_windows[fig_num]
+
+    def has_figure(self, fig_num: int) -> bool:
+        return fig_num in self.figures_refs
+
+    def show_window(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def force_close_all(self):
+        reply = QMessageBox.question(
+            self,
+            "Confirm Exit",
+            "Are you sure you want to close Plot Manager and all figures?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            window_list = self.figure_windows.copy().values()
+            for window in window_list:
+                if window:
+                    window.close()
+            self.figure_windows.clear()
+            self.close()
+
+    def closeEvent(self, event):
+        if self.allow_full_close:
+            self.force_close_all()
+        else:
+            self.hide()
+            event.ignore()
+
+    def _update_active_marker(self):
+        """Append ‘*’ to the active figure’s name and remove it elsewhere."""
+        for i in range(self.list_widget.count()):
+            it = self.list_widget.item(i)
+            num = it.data(Qt.ItemDataRole.UserRole)
+            if not self.figures_status.get(num, True):
+                text = f"Figure {num} (Closed)"
+            else:
+                text = f"Figure {num}"
+                if num == self.active_figure_num:
+                    text += " *"
+            it.setText(text)
+
+
+# --- Test Script ---
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+
+    plot_window = PlotWindow(allow_full_close=True)
+    plot_window.show()
+
+    fig1 = plt.figure(1)
+    x = np.linspace(0, 2 * np.pi, 100)
+    plt.plot(x, np.sin(x))
+    plot_window.add_figure(fig1)
+
+    fig2 = plt.figure(2)
+    plt.plot(x, np.cos(x))
+    plot_window.add_figure(fig2)
+
+    plt.close(fig1)
+    plot_window.mark_figure_closed(1)
+
+    fig3 = plt.figure(3)
+    plt.plot([1, 2, 3, 4], [1, 4, 9, 16])
+    plot_window.add_figure(fig3)
+
+    sys.exit(app.exec())

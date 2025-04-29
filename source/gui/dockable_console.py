@@ -2,7 +2,8 @@ import re
 import sys
 
 import matplotlib
-matplotlib.use('QtAgg', force=True)
+
+matplotlib.use("QtAgg", force=True)
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -16,7 +17,7 @@ from PyQt6.QtGui import QColor, QFont, QImage, QKeyEvent, QPalette, QPixmap
 from PyQt6.QtWidgets import (QApplication, QDockWidget, QLabel, QMainWindow,
                              QTextEdit, QVBoxLayout, QWidget)
 
-from plot_window import PlotWindow
+
 class ScintillaConsole(QsciScintilla):
     # Regex to match ANSI escape sequences (like \x1b[31m)
     ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -32,7 +33,6 @@ class ScintillaConsole(QsciScintilla):
 
         self.prompt_str = prompt_str
         self.plot_window = PlotWindow(parent=self.window())
-        self.plot_window.hide()
         self.plot_window.figure_switched.connect(self._on_figure_switched)
 
         self.color_theme = color_theme
@@ -43,26 +43,24 @@ class ScintillaConsole(QsciScintilla):
         # IPython shell setup
         self.shell = TerminalInteractiveShell.instance()
         self.install_display_hook()
-        self.shell.enable_matplotlib(gui='qt')
+        self.shell.enable_matplotlib(gui="qt")
         self.shell.run_line_magic("matplotlib", "qt")  # safe now
         from IPython.core.getipython import get_ipython
+
         ip = get_ipython()
-        ip.display_formatter.active_types = ['text/plain', 'text/html']
-        
+        ip.display_formatter.active_types = ["text/plain", "text/html"]
+
         plt.ioff()
-        plt.show = lambda *a, **kw: None # prevent GUI popups from matplotlib
+        plt.show = lambda *a, **kw: None  # prevent GUI popups from matplotlib
 
         self.user_ns = self.shell.user_ns
         from IPython.display import display
+
         self.user_ns["display"] = display
 
-        self.user_ns.update({
-            "np": np,
-            "pd": pd,
-            "plt": plt,
-            "skl": skl,
-            "display": display
-        })
+        self.user_ns.update(
+            {"np": np, "pd": pd, "plt": plt, "skl": skl, "display": display}
+        )
 
         # Editor look
         self.setUtf8(True)
@@ -134,9 +132,13 @@ class ScintillaConsole(QsciScintilla):
         self.STYLE_SYSTEM = 129
         self.SendScintilla(self.SCI_STYLESETFONT, self.STYLE_SYSTEM, b"Consolas")
         self.SendScintilla(self.SCI_STYLESETSIZE, self.STYLE_SYSTEM, 12)
-        self.SendScintilla(self.SCI_STYLESETFORE, self.STYLE_SYSTEM, QColor("#888888"))  # Light gray
+        self.SendScintilla(
+            self.SCI_STYLESETFORE, self.STYLE_SYSTEM, QColor("#888888")
+        )  # Light gray
         self.SendScintilla(self.SCI_STYLESETITALIC, self.STYLE_SYSTEM, True)
-        self.SendScintilla(self.SCI_STYLESETBACK, self.STYLE_SYSTEM, QColor("#1e1e1e"))  # Match dark bg
+        self.SendScintilla(
+            self.SCI_STYLESETBACK, self.STYLE_SYSTEM, QColor("#1e1e1e")
+        )  # Match dark bg
 
         if self.color_theme == "light":
             self.set_light_theme()
@@ -319,7 +321,7 @@ class ScintillaConsole(QsciScintilla):
         for i in range(self.prompt_line, total_lines):
             line_text = self.text(i)
             if line_text.startswith(self.prompt_str):
-                input_lines.append(line_text[len(self.prompt_str):])
+                input_lines.append(line_text[len(self.prompt_str) :])
             else:
                 input_lines.append(line_text)
         user_input = "\n".join(input_lines).rstrip()
@@ -362,9 +364,11 @@ class ScintillaConsole(QsciScintilla):
                     self.appendText("\n" + text_output + "\n")
 
         shell.displayhook.write_output_prompt = lambda: None
-        shell.displayhook.write_format_data = lambda data, fmt=None: None  # suppress default
+        shell.displayhook.write_format_data = (
+            lambda data, fmt=None: None
+        )  # suppress default
         shell.displayhook.__call__ = custom_displayhook
-        
+
     def run_current_input(self):
         # Extract code from the current prompt line to end
         total_lines = self.lines()
@@ -408,7 +412,7 @@ class ScintillaConsole(QsciScintilla):
             self.appendTextStyled(
                 ScintillaConsole.remove_ansi_codes(stderr), self.STYLE_STDERR
             )
-                
+
         self.update_autocompletions()
         self.render_inline_plot()
 
@@ -474,18 +478,19 @@ class ScintillaConsole(QsciScintilla):
 
     def render_inline_plot(self):
         """Captures the current matplotlib figure and displays it inline as a QLabel."""
+        print("rendering inline figures.")
         if not plt.get_fignums():
             self.plot_window.hide()
             return
-        
+
         fig = plt.gcf()
         fig_num = fig.number
 
         if not fig.get_axes():
             return
-    
+
         if self.plot_window.has_figure(fig_num):
-            self.plot_window.refresh_figure_tab(fig)
+            self.plot_window.refresh_figure(fig)
         else:
             added = self.plot_window.add_figure(fig)
 
@@ -495,8 +500,16 @@ class ScintillaConsole(QsciScintilla):
                 self.plot_window.activateWindow()
 
     def _on_figure_switched(self, fig_num):
-        plt.figure(num=fig_num)
-        self.insert_message_above_prompt(f"# Switched to Figure {fig_num}")
+        if fig_num == -1:
+            # A closed figure was selected or invalid selection
+            self.insert_message_above_prompt(
+                "# Warning: Attempted to switch to a closed figure.\n"
+            )
+        else:
+            import matplotlib.pyplot as plt
+
+            plt.figure(fig_num)
+            self.insert_message_above_prompt(f"# Switched to Figure {fig_num}\n")
 
 
 class ConsolePanel(QWidget):
@@ -562,8 +575,9 @@ class MainWindow(QMainWindow):
         )
 
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.console_dock)
-        sys.stdout = ConsoleOutputStream(self.appendText)
-        sys.stderr = ConsoleOutputStream(lambda text: self.appendTextStyled(text, self.STYLE_STDERR))
+        # sys.stdout = ConsoleOutputStream(self.console_panel.console.appendText)
+        # sys.stderr = ConsoleOutputStream(lambda text: self.console_panel.console.appendTextStyled(text, self.STYLE_STDERR))
+
 
 class ConsoleOutputStream:
     def __init__(self, append_func):
@@ -575,6 +589,7 @@ class ConsoleOutputStream:
 
     def flush(self):
         pass  # No-op for compatibility
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
