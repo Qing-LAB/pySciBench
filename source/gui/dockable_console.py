@@ -375,6 +375,7 @@ class ScintillaConsole(QsciScintilla):
         code_lines = []
         for line_num in range(self.prompt_line, total_lines):
             code_lines.append(self.text(line_num))
+        last_line = code_lines[-1].strip()
         code = "\n".join(code_lines).strip()
 
         if not code:
@@ -385,8 +386,10 @@ class ScintillaConsole(QsciScintilla):
         self.history.append(code)
         self.history_index = len(self.history)
 
+        print(f"{last_line} [len = {len(last_line)}]")
+        
         complete_status = self.shell.input_transformer_manager.check_complete(code)[0]
-        if complete_status != "complete":
+        if len(last_line) > 3 or complete_status != "complete":
             self.appendText("\n... ")
             return
 
