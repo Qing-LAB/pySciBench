@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (QApplication, QFileDialog, QListWidget,
                              QListWidgetItem, QMainWindow, QMenu, QMessageBox,
                              QTextEdit, QVBoxLayout, QWidget)
 
+
 class FigureWindow(QMainWindow):
     """This window class shows one figure as a separate window. When the user
     closes the figure window, the parent will be notified to keep track of the
@@ -33,7 +34,6 @@ class FigureWindow(QMainWindow):
             if hasattr(self.parent(), 'notify_figure_window_closed'):
                 self.parent().notify_figure_window_closed(self.fig.number)
         super().closeEvent(event)
-
 
 # --- PlotWindow: main plot manager window ---
 class PlotWindow(QMainWindow):
@@ -80,6 +80,7 @@ class PlotWindow(QMainWindow):
         main_widget.setLayout(layout)
         self.setCentralWidget(main_widget)
 
+        self.figure_info_list = [{'window': None, 'status': None, 'refs': None, "fig_num": None, "fig_suptitle": None}]
         self.figure_windows = {}  # fig_num -> FigureWindow
         self.figures_status = {}  # fig_num -> bool (open/closed)
         self.figures_refs = {}  # fig_num -> Figure
