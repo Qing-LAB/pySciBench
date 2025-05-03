@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "py-sci-bench"
+version = "0.1.0"
+authors = [
+  { name = "Quan Qing", email = "quan.qing@asu.edu" }
+]
+description = "Real-time data acquisition and visualization for lab scientists"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.8"
+keywords = ["science", "data", "acquisition", "visualization"]
+home-page = "https://github.com/Qing-LAB/PySciBench"
+
+[project.urls]
+"Documentation" = "https://github.com/Qing-LAB/PySciBench#readme"
+"Source" = "https://github.com/Qing-LAB/PySciBench"
+"Tracker" = "https://github.com/Qing-LAB/PySciBench/issues"
