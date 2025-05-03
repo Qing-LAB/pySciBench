@@ -30,10 +30,16 @@ class FigureWindow(QMainWindow):
         self.setGeometry(300, 300, 600, 400)
 
     def closeEvent(self, event):
-        if self.parent() is not None:
-            if hasattr(self.parent(), 'notify_figure_window_closed'):
-                self.parent().notify_figure_window_closed(self.fig.number)
-        super().closeEvent(event)
+        try:
+            if self.parent() is not None:
+                if hasattr(self.parent(), 'notify_figure_window_closed'):
+                    self.parent().notify_figure_window_closed(self.fig.number)
+        except Exception as e:
+            print("Error when FigureWindow try to invoke parent window notify_figure_window_closed() method.")
+            print(e)
+        finally:
+            super().closeEvent(event)
+
 
 # --- PlotWindow: main plot manager window ---
 class PlotWindow(QMainWindow):
@@ -80,7 +86,7 @@ class PlotWindow(QMainWindow):
         main_widget.setLayout(layout)
         self.setCentralWidget(main_widget)
 
-        self.figure_info_list = [{'window': None, 'status': None, 'refs': None, "fig_num": None, "fig_suptitle": None}]
+        self.figure_info_list = list()
         self.figure_windows = {}  # fig_num -> FigureWindow
         self.figures_status = {}  # fig_num -> bool (open/closed)
         self.figures_refs = {}  # fig_num -> Figure
@@ -90,6 +96,23 @@ class PlotWindow(QMainWindow):
         self.list_widget.itemDoubleClicked.connect(self._on_figure_double_clicked)
         self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_widget.customContextMenuRequested.connect(self._open_context_menu)
+
+    def update_figure_info_list(self):
+        try:
+            all_figure_num_list = plt.get_fignums()
+            current_active_figure = plt.gcf()
+
+            for fig_num in all_figure_num_list:
+                fig_suptitle = plt.figure(fig_num).get_suptitle()
+
+                    fig_suptitle = fig_suptitle.get_text()
+
+        except Exception as e:
+            print(e)
+            return
+        finally:
+            if current_active_figure:
+                plt.figure(current_active_figure)
 
     def add_figure(self, fig: Figure):
         fig_num = fig.number
