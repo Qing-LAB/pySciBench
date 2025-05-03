@@ -162,3 +162,15 @@ cython_debug/
 #VS Code
 .vscode/
 
+# PyPI cache
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Testing
+htmlcov/
+.coverage
+.tox/
+.nose2/
+
+
+
