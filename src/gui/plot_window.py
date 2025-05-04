@@ -1,14 +1,28 @@
+# Change log
+#
+# 2025/05/03
+# Clean up code to implement the following functions:
+#   1. FigureWindow will show its cap with suptitle of the figure
+#   2. FigureWindow will have different title color if the figure is the
+#       current figure of plt
+#   3. Use try-except-finally to address potential errors
+#   4. PlotWindow do not actively change the current figure, but rather
+#       just try to keep track of the active figure and update FigureWindow
+#   5. Add figure management by name and fig_num
+
 import sys
 
+import intercepts
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QApplication, QFileDialog, QListWidget,
                              QListWidgetItem, QMainWindow, QMenu, QMessageBox,
                              QTextEdit, QVBoxLayout, QWidget)
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
 
 
 class FigureWindow(QMainWindow):
@@ -21,17 +35,32 @@ class FigureWindow(QMainWindow):
             parent window that will receive notification when the user closes
             the figure window.
     """
+
     def __init__(self, fig: Figure, parent=None):
         super().__init__(parent)
-        self.fig = fig
-        self.canvas = FigureCanvas(fig)
-        self.setCentralWidget(self.canvas)
-        self.setWindowTitle(f"Figure {fig.number}")
-        self.setGeometry(300, 300, 600, 400)
+        self.fig_ready = False
+        try:
+            self.update_fig(fig)
+            self.fig_ready = True
+        except Exception as e:
+            print("Error when initializing FigureWindow.")
+            print(e)
+
+    def update_fig(self, fig):
+        if fig and fig.get_axes():
+            self.fig = fig
+            self.fig_num = fig.number
+            self.fig_suptitle = fig.get_suptitle()
+
+            self.canvas = FigureCanvas(fig)
+            self.setCentralWidget(self.canvas)
+            self.setWindowTitle(f"Figure {fig.number}")
+            self.setGeometry(300, 300, 600, 400)
+        return True
 
     def closeEvent(self, event):
         try:
-            if self.parent() is not None:
+            if self.fig_ready and self.parent() is not None:
                 if hasattr(self.parent(), 'notify_figure_window_closed'):
                     self.parent().notify_figure_window_closed(self.fig.number)
         except Exception as e:
@@ -39,6 +68,42 @@ class FigureWindow(QMainWindow):
             print(e)
         finally:
             super().closeEvent(event)
+
+
+def hook_figure_creation(*args, **kwargs):
+    if 'facecolor' in kwargs:
+        facecolor = kwargs['facecolor']
+        del kwargs['facecolor']
+    else:
+        facecolor = None
+
+    if 'edgecolor' in kwargs:
+        edgecolor = kwargs['edgecolor']
+        del kwargs['edgecolor']
+    else:
+        edgecolor = None
+
+    if 'frameon' in kwargs:
+        frameon = kwargs['frameon']
+        del kwargs['frameon']
+    else:
+        frameon = True
+
+    if 'FigureClass' in kwargs:
+        FigureClass = kwargs['FigureClass']
+        del kwargs['FigureClass']
+    else:
+        FigureClass = matplotlib.figure.Figure
+
+    if 'clear' in kwargs:
+        clear = kwargs['clear']
+        del kwargs['clear']
+    else:
+        clear = False
+    result = _(*args, facecolor=facecolor, edgecolor=edgecolor, frameon=frameon, FigureClass=FigureClass, clear=clear,
+               **kwargs)
+    PlotWindow._on_figure_created(result)
+    return result
 
 
 # --- PlotWindow: main plot manager window ---
@@ -65,9 +130,19 @@ class PlotWindow(QMainWindow):
 
     """
     figure_switched = pyqtSignal(int)
+    figure_creation_hook = False
+
+    @classmethod
+    def _on_figure_created(cls, fig: Figure):
+        print(f"Figure {fig.number} created.")
 
     def __init__(self, parent=None, allow_full_close=False):
         super().__init__(parent)
+
+        if not self.figure_creation_hook:
+            intercepts.register(plt.figure, hook_figure_creation)
+            self.figure_creation_hook = True
+
         self.setWindowTitle("Plot Manager")
         self.setGeometry(100, 100, 400, 600)
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
@@ -97,22 +172,19 @@ class PlotWindow(QMainWindow):
         self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_widget.customContextMenuRequested.connect(self._open_context_menu)
 
-    def update_figure_info_list(self):
-        try:
-            all_figure_num_list = plt.get_fignums()
-            current_active_figure = plt.gcf()
-
-            for fig_num in all_figure_num_list:
-                fig_suptitle = plt.figure(fig_num).get_suptitle()
-
-                    fig_suptitle = fig_suptitle.get_text()
-
-        except Exception as e:
-            print(e)
-            return
-        finally:
-            if current_active_figure:
-                plt.figure(current_active_figure)
+    # def update_figure_info_list(self):
+    #     try:
+    #         all_figure_num_list = plt.get_fignums()
+    #         current_active_figure = plt.gcf()
+    #
+    #         for fig_num in all_figure_num_list:
+    #             fig_suptitle = plt.figure(fig_num).get_suptitle()
+    #     except Exception as e:
+    #         print(e)
+    #         return
+    #     finally:
+    #         if current_active_figure:
+    #             plt.figure(current_active_figure)
 
     def add_figure(self, fig: Figure):
         fig_num = fig.number
