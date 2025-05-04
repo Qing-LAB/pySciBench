@@ -10,19 +10,24 @@
 #       just try to keep track of the active figure and update FigureWindow
 #   5. Add figure management by name and fig_num
 
+import logging
+import random
 import sys
 
 import intercepts
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QApplication, QFileDialog, QListWidget,
                              QListWidgetItem, QMainWindow, QMenu, QMessageBox,
                              QTextEdit, QVBoxLayout, QWidget)
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__file__ + "." + __name__)
 
 
 class FigureWindow(QMainWindow):
@@ -40,13 +45,13 @@ class FigureWindow(QMainWindow):
         super().__init__(parent)
         self.fig_ready = False
         try:
-            self.update_fig(fig)
+            self.redraw_fig(fig)
             self.fig_ready = True
         except Exception as e:
-            print("Error when initializing FigureWindow.")
-            print(e)
+            logger.error("Error when initializing FigureWindow.")
+            logger.exception(e, exc_info=True, stack_info=True)
 
-    def update_fig(self, fig):
+    def redraw_fig(self, fig):
         if fig and fig.get_axes():
             self.fig = fig
             self.fig_num = fig.number
@@ -56,7 +61,6 @@ class FigureWindow(QMainWindow):
             self.setCentralWidget(self.canvas)
             self.setWindowTitle(f"Figure {fig.number}")
             self.setGeometry(300, 300, 600, 400)
-        return True
 
     def closeEvent(self, event):
         try:
@@ -64,13 +68,22 @@ class FigureWindow(QMainWindow):
                 if hasattr(self.parent(), 'notify_figure_window_closed'):
                     self.parent().notify_figure_window_closed(self.fig.number)
         except Exception as e:
-            print("Error when FigureWindow try to invoke parent window notify_figure_window_closed() method.")
-            print(e)
+            logger.error("Error when FigureWindow try to invoke parent window notify_figure_window_closed() method.")
+            logger.exception(e, exc_info=True, stack_info=True)
         finally:
             super().closeEvent(event)
 
 
 def hook_figure_creation(*args, **kwargs):
+    """
+    This is the hook function to monitor the call to pyplot.figure() and maintain the figure list
+    Args:
+        *args:
+        **kwargs:
+
+    Returns:
+
+    """
     if 'facecolor' in kwargs:
         facecolor = kwargs['facecolor']
         del kwargs['facecolor']
@@ -129,12 +142,11 @@ class PlotWindow(QMainWindow):
             later by calling the function show_window()        
 
     """
-    figure_switched = pyqtSignal(int)
     figure_creation_hook = False
-
-    @classmethod
-    def _on_figure_created(cls, fig: Figure):
-        print(f"Figure {fig.number} created.")
+    _figure_uid = dict()
+    _figure_track_list = dict()
+    _instance = None
+    _next_fig_uid = random.randint(1, 1000)
 
     def __init__(self, parent=None, allow_full_close=False):
         super().__init__(parent)
@@ -161,160 +173,186 @@ class PlotWindow(QMainWindow):
         main_widget.setLayout(layout)
         self.setCentralWidget(main_widget)
 
-        self.figure_info_list = list()
-        self.figure_windows = {}  # fig_num -> FigureWindow
-        self.figures_status = {}  # fig_num -> bool (open/closed)
-        self.figures_refs = {}  # fig_num -> Figure
-        self.active_figure_num = None
-
         self.list_widget.itemClicked.connect(self._on_figure_selected)
         self.list_widget.itemDoubleClicked.connect(self._on_figure_double_clicked)
         self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_widget.customContextMenuRequested.connect(self._open_context_menu)
+        PlotWindow._instance = self
 
-    # def update_figure_info_list(self):
-    #     try:
-    #         all_figure_num_list = plt.get_fignums()
-    #         current_active_figure = plt.gcf()
-    #
-    #         for fig_num in all_figure_num_list:
-    #             fig_suptitle = plt.figure(fig_num).get_suptitle()
-    #     except Exception as e:
-    #         print(e)
-    #         return
-    #     finally:
-    #         if current_active_figure:
-    #             plt.figure(current_active_figure)
+    @classmethod
+    def _check_fig_in_list(cls, fig: Figure) -> bool:
+        return fig in cls._figure_uid.values()
+
+    @classmethod
+    def _get_fig_info_in_list(cls, fig: Figure) -> dict:
+        for key, value in cls._figure_uid.items():
+            if value == fig:
+                return cls._figure_track_list[key]
+        return {}
+
+    @classmethod
+    def _update_fig_info_in_list(cls, fig: Figure, **kwargs):
+        for key, value in cls._figure_uid.items():
+            if value == fig:
+                if key in cls._figure_track_list:
+                    cls._figure_track_list[key].update(kwargs)
+                else:
+                    cls._figure_track_list[key] = kwargs
+                return
+        unique_key = cls._next_fig_uid
+        cls._next_fig_uid += 1
+
+        cls._figure_uid[unique_key] = fig
+        cls._figure_track_list[unique_key] = kwargs
+
+    @staticmethod
+    def _on_figure_created(fig: Figure):
+        """
+        This will be called by the hook function intercepting pyplot.figure().
+        This functino will link the close_event for the figure to _on_figure_closed.
+        Args:
+            fig:
+
+        Returns:
+
+        """
+        try:
+            if not PlotWindow._check_fig_in_list(fig):
+                logger.debug(f"Figure {fig.number} id({id(fig)}) created.")
+                cid = fig.canvas.mpl_connect('close_event', PlotWindow._on_figure_closed)
+                PlotWindow._update_fig_info_in_list(fig, **{'created': True, 'closed': False, 'close_event_cid': cid})
+                PlotWindow._instance._update_fig_list()
+        except Exception as e:
+            logger.error("Error when monitoring figure creation")
+            logger.exception(e, exc_info=True, stack_info=True)
+
+    @staticmethod
+    def _on_figure_closed(event):
+        try:
+            fig = event.canvas.figure
+            if PlotWindow._check_fig_in_list(fig):
+                fig.canvas.mpl_disconnect(PlotWindow._get_fig_info_in_list(fig)['close_event_cid'])
+                PlotWindow._update_fig_info_in_list(fig, **{'closed': True})
+            else:
+                logger.warning(f"Warning: fig {id(fig)} was not in the figure track list.")
+            PlotWindow._instance._update_fig_list()
+            logger.debug(f"Figure {fig.number} closed.")
+        except Exception as e:
+            logger.error("Error when monitoring figure closing")
+            logger.exception(e, exc_info=True, stack_info=True)
+
+    def _format_figure_name(self, fig: Figure, close_flag: bool) -> str:
+        suptitle = fig.get_suptitle()
+        if suptitle:
+            figure_name = f"Figure {fig.number} ({suptitle})"
+        else:
+            figure_name = f"Figure {fig.number} (untitled)"
+        if close_flag:
+            figure_name += " (closed)"
+        return figure_name
 
     def add_figure(self, fig: Figure):
-        fig_num = fig.number
-        if fig_num in self.figures_refs:
-            return
+        try:
+            self._on_figure_created(fig)
+            item = QListWidgetItem(self._format_figure_name(fig, False))
+            item.setData(Qt.ItemDataRole.UserRole, fig)
+            self.list_widget.addItem(item)
+            self._update_fig_list()
+        except Exception as e:
+            logger.error("Error when adding figure")
+            logger.exception(e, exc_info=True, stack_info=True)
 
-        self.figures_refs[fig_num] = fig
-        self.figures_status[fig_num] = True
-        item = QListWidgetItem(f"Figure {fig_num}")
-        item.setForeground(QColor("green"))
-        item.setData(Qt.ItemDataRole.UserRole, fig_num)
-        self.list_widget.addItem(item)
+    def _update_fig_list(self):
+        try:
+            for index in range(self.list_widget.count()):
+                item = self.list_widget.item(index)
+                fig = item.data(Qt.ItemDataRole.UserRole)
+                if PlotWindow._check_fig_in_list(fig):
+                    fig_info = PlotWindow._get_fig_info_in_list(fig)
+                    close_flag = fig_info['closed']
+                    fig_name = self._format_figure_name(fig, close_flag)
+                    if fig is plt.gcf():
+                        fig_name += "*"
+                    item.setText(fig_name)
+                    if close_flag:
+                        item.setForeground(QColor("red"))
+                    else:
+                        item.setForeground(QColor("green"))
+        except Exception as e:
+            logger.error("Error when updating figure list")
+            logger.exception(e, exc_info=True, stack_info=True)
 
-    def mark_figure_closed(self, fig_num: int):
-        if fig_num in self.figures_status:
-            self.figures_status[fig_num] = False
-            for i in range(self.list_widget.count()):
-                item = self.list_widget.item(i)
-                if item.data(Qt.ItemDataRole.UserRole) == fig_num:
-                    item.setForeground(QColor("red"))
-                    item.setText(f"Figure {fig_num} (Closed)")
-
-    def _update_info_panel(self, fig_num: int):
-        if fig_num in self.figures_refs:
-            fig = self.figures_refs[fig_num]
-            text = f"""Figure {fig_num}\nAxes: {len(fig.get_axes())}\nClosed: {not self.figures_status.get(fig_num, True)}"""
+    def _update_info_panel(self, fig: Figure):
+        if PlotWindow._check_fig_in_list(fig):
+            fig_num = fig.number
+            close_status = PlotWindow._get_fig_info_in_list(fig)['closed']
+            text = f"""Figure {fig_num}\nAxes: {len(fig.get_axes())}\nClosed: {close_status}"""
             self.info_window.setText(text)
 
     def _on_figure_selected(self, item: QListWidgetItem):
-        fig_num = item.data(Qt.ItemDataRole.UserRole)
-        self._update_info_panel(fig_num)
+        """
+        Update info window, possibly update a thumbnail?
+        Args:
+            item:
 
-        if not self.figures_status.get(fig_num, False):
-            self.active_figure_num = None
-            # self.show_closed_figure_window(fig_num)
-        else:
-            fig = self.figures_refs[fig_num]
-            plt.figure(fig_num)
-            self.active_figure_num = fig_num
-            self.figure_switched.emit(fig_num)
+        Returns:
 
-        self._update_active_marker()
+        """
+        fig = item.data(Qt.ItemDataRole.UserRole)
+        self._update_fig_list()
+        self._update_info_panel(fig)
 
     def _on_figure_double_clicked(self, item: QListWidgetItem):
-        fig_num = item.data(Qt.ItemDataRole.UserRole)
-        if not self.figures_status.get(fig_num, False):
-            self.show_closed_figure_window(fig_num)
-        else:
-            self.active_figure_num = fig_num
-            self._update_active_marker()
-            self.show_active_figure_window()
+        fig = item.data(Qt.ItemDataRole.UserRole)
+        self.show_figure_window(fig)
 
     def _open_context_menu(self, position):
         menu = QMenu(self)
-        close_action = menu.addAction("Close Figure")
+        # close_action = menu.addAction("Close Figure")
         save_action = menu.addAction("Save Figure")
 
         selected_item = self.list_widget.itemAt(position)
         if selected_item is None:
             return
 
-        fig_num = selected_item.data(Qt.ItemDataRole.UserRole)
+        fig = selected_item.data(Qt.ItemDataRole.UserRole)
         action = menu.exec(self.list_widget.mapToGlobal(position))
 
-        if action == close_action:
-            self.mark_figure_closed(fig_num)
-        elif action == save_action:
-            self._save_figure(fig_num)
+        if action is save_action:
+            self._save_figure(fig)
 
-    def _save_figure(self, fig_num: int):
-        if fig_num in self.figures_refs:
-            fig = self.figures_refs[fig_num]
-            file_path, _ = QFileDialog.getSaveFileName(
-                self,
-                f"Save Figure {fig_num}",
-                f"figure_{fig_num}",
-                "Images (*.png *.pdf *.svg)",
-            )
-            if file_path:
-                if file_path.endswith(".pdf"):
-                    fig.savefig(file_path, format="pdf")
-                elif file_path.endswith(".svg"):
-                    fig.savefig(file_path, format="svg")
+    def _save_figure(self, fig: Figure):
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            f"Save Figure {fig.number}",
+            f"figure_{fig.number}",
+            "Images (*.png *.pdf *.svg)",
+        )
+        if file_path:
+            if file_path.endswith(".pdf"):
+                fig.savefig(file_path, format="pdf")
+            elif file_path.endswith(".svg"):
+                fig.savefig(file_path, format="svg")
+            else:
+                fig.savefig(file_path, format="png")
+
+    def show_figure_window(self, fig: Figure):
+        try:
+            if PlotWindow._check_fig_in_list(fig):
+                fig_record = PlotWindow._get_fig_info_in_list(fig)
+                if "figure_window" not in fig_record:
+                    window = FigureWindow(fig, parent=self)
+                    PlotWindow._update_fig_info_in_list(fig, **{"figure_window": window})
+                    window.show()
                 else:
-                    fig.savefig(file_path, format="png")
+                    window = fig_record["figure_window"]
+                    window.showNormal()
 
-    def show_closed_figure_window(self, fig_num: int):
-        if fig_num in self.figure_windows:
-            window = self.figure_windows[fig_num]
-            window.showNormal()
-            window.raise_()
-            window.activateWindow()
-        else:
-            if fig_num in self.figures_refs:
-                fig = self.figures_refs[fig_num]
-                window = FigureWindow(fig, parent=self)
-                self.figure_windows[fig_num] = window
-                window.show()
-
-    def show_active_figure_window(self):
-        if self.active_figure_num is None:
-            return
-
-        fig_num = self.active_figure_num
-
-        if fig_num not in self.figure_windows:
-            if fig_num in self.figures_refs:
-                fig = self.figures_refs[fig_num]
-                window = FigureWindow(fig, parent=self)
-                self.figure_windows[fig_num] = window
-                window.show()
-        else:
-            window = self.figure_windows[fig_num]
-            window.showNormal()
-            window.raise_()
-            window.activateWindow()
-
-    def refresh_figure(self, fig: Figure):
-        fig_num = fig.number
-        self.figures_refs[fig_num] = fig
-        if fig_num in self.figure_windows:
-            window = self.figure_windows[fig_num]
-            window.canvas.draw()
-
-    def notify_figure_window_closed(self, fig_num: int):
-        if fig_num in self.figure_windows:
-            del self.figure_windows[fig_num]
-
-    def has_figure(self, fig_num: int) -> bool:
-        return fig_num in self.figures_refs
+                window.raise_()
+                window.activateWindow()
+        except Exception as e:
+            logger.error("Error when showing figure window")
+            logger.exception(e, exc_info=True, stack_info=True)
 
     def show_window(self):
         self.showNormal()
@@ -329,11 +367,11 @@ class PlotWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            window_list = self.figure_windows.copy().values()
-            for window in window_list:
-                if window:
-                    window.close()
-            self.figure_windows.clear()
+            for fig_info in PlotWindow._figure_track_list.values():
+                if "figure_window" in fig_info:
+                    fig_info["figure_window"].close()
+            self._figure_track_list.clear()
+            self._figure_uid.clear()
             self.close()
 
     def closeEvent(self, event):
@@ -342,19 +380,6 @@ class PlotWindow(QMainWindow):
         else:
             self.hide()
             event.ignore()
-
-    def _update_active_marker(self):
-        """Append ‘*’ to the active figure’s name and remove it elsewhere."""
-        for i in range(self.list_widget.count()):
-            it = self.list_widget.item(i)
-            num = it.data(Qt.ItemDataRole.UserRole)
-            if not self.figures_status.get(num, True):
-                text = f"Figure {num} (Closed)"
-            else:
-                text = f"Figure {num}"
-                if num == self.active_figure_num:
-                    text += " *"
-            it.setText(text)
 
 
 # --- Test Script ---
@@ -373,11 +398,9 @@ if __name__ == "__main__":
     plt.plot(x, np.cos(x))
     plot_window.add_figure(fig2)
 
-    plt.close(fig1)
-    plot_window.mark_figure_closed(1)
-
     fig3 = plt.figure(3)
     plt.plot([1, 2, 3, 4], [1, 4, 9, 16])
     plot_window.add_figure(fig3)
 
+    plt.close(fig1)
     sys.exit(app.exec())
