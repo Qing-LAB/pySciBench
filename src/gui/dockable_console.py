@@ -14,8 +14,15 @@ from plot_window import PlotWindow
 from PyQt6.Qsci import QsciAPIs, QsciLexerPython, QsciScintilla
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont, QImage, QKeyEvent, QPalette, QPixmap
-from PyQt6.QtWidgets import (QApplication, QDockWidget, QLabel, QMainWindow,
-                             QTextEdit, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDockWidget,
+    QLabel,
+    QMainWindow,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class ScintillaConsole(QsciScintilla):
@@ -33,7 +40,7 @@ class ScintillaConsole(QsciScintilla):
 
         self.prompt_str = prompt_str
         self.plot_window = PlotWindow(parent=self.window())
-        self.plot_window.figure_switched.connect(self._on_figure_switched)
+        # self.plot_window.figure_switched.connect(self._on_figure_switched)
 
         self.color_theme = color_theme
         # --- Core background colors
@@ -387,7 +394,7 @@ class ScintillaConsole(QsciScintilla):
         self.history_index = len(self.history)
 
         print(f"{last_line} [len = {len(last_line)}]")
-        
+
         complete_status = self.shell.input_transformer_manager.check_complete(code)[0]
         if len(last_line) > 3 or complete_status != "complete":
             self.appendText("\n... ")
