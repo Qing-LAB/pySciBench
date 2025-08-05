@@ -30,7 +30,7 @@ import intercepts
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QMutexLocker, QReadLocker, QWriteLocker
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QApplication, QFileDialog, QListWidget,
                              QListWidgetItem, QMainWindow, QMenu, QMessageBox,
@@ -38,9 +38,7 @@ from PyQt6.QtWidgets import (QApplication, QFileDialog, QListWidget,
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__file__ + "." + __name__)
-
 
 class FigureWindow(QMainWindow):
     """This window class shows one figure as a separate window. When the user
@@ -52,6 +50,7 @@ class FigureWindow(QMainWindow):
             parent window that will receive notification when the user closes
             the figure window.
     """
+    _figurewindow_lock = QMutexLocker()
 
     def __init__(self, fig: Figure, parent=None):
         super().__init__(parent)
@@ -96,35 +95,11 @@ def hook_figure_creation(*args, **kwargs):
     Returns:
 
     """
-    if 'facecolor' in kwargs:
-        facecolor = kwargs['facecolor']
-        del kwargs['facecolor']
-    else:
-        facecolor = None
-
-    if 'edgecolor' in kwargs:
-        edgecolor = kwargs['edgecolor']
-        del kwargs['edgecolor']
-    else:
-        edgecolor = None
-
-    if 'frameon' in kwargs:
-        frameon = kwargs['frameon']
-        del kwargs['frameon']
-    else:
-        frameon = True
-
-    if 'FigureClass' in kwargs:
-        FigureClass = kwargs['FigureClass']
-        del kwargs['FigureClass']
-    else:
-        FigureClass = matplotlib.figure.Figure
-
-    if 'clear' in kwargs:
-        clear = kwargs['clear']
-        del kwargs['clear']
-    else:
-        clear = False
+    facecolor = kwargs.pop('facecolor', None)
+    edgecolor = kwargs.pop('edgecolor', None)
+    frameon = kwargs.pop('frameon', True)
+    FigureClass = kwargs.pop('FigureClass', matplotlib.figure.Figure)
+    clear = kwargs.pop('clear', False)
     result = _(*args, facecolor=facecolor, edgecolor=edgecolor, frameon=frameon, FigureClass=FigureClass, clear=clear,
                **kwargs)
     PlotWindow._on_figure_created(result)
@@ -154,8 +129,9 @@ class PlotWindow(QMainWindow):
             later by calling the function show_window()        
 
     """
+    _plotwindow_lock = QMutexLocker()
     figure_creation_hook = False
-    _figure_uid = dict()
+    _figure_uid: dict[int, Figure] = dict()
     _figure_track_list = dict()
     _instance = None
     _next_fig_uid = random.randint(1, 1000)
@@ -189,6 +165,10 @@ class PlotWindow(QMainWindow):
         self.list_widget.itemDoubleClicked.connect(self._on_figure_double_clicked)
         self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_widget.customContextMenuRequested.connect(self._open_context_menu)
+        # Simple singleton pattern - warn if multiple instances
+        if PlotWindow._instance is not None:
+            logger.warning("Multiple PlotWindow instances detected. Using existing instance.")
+            return
         PlotWindow._instance = self
 
     @classmethod
@@ -199,7 +179,7 @@ class PlotWindow(QMainWindow):
     def _get_fig_info_in_list(cls, fig: Figure) -> dict:
         for key, value in cls._figure_uid.items():
             if value == fig:
-                return cls._figure_track_list[key]
+                return cls._figure_track_list.get(key, {})
         return {}
 
     @classmethod
@@ -229,13 +209,32 @@ class PlotWindow(QMainWindow):
 
         """
         try:
+            if fig is None:
+                logger.error("Cannot monitor None figure")
+                return
+                
             if not PlotWindow._check_fig_in_list(fig):
-                logger.debug(f"Figure {fig.number} id({id(fig)}) created.")
+                logger.info(f"Figure {fig.number} id({id(fig)}) has just been created or added to the list explicitly.")
                 cid = fig.canvas.mpl_connect('close_event', PlotWindow._on_figure_closed)
                 PlotWindow._update_fig_info_in_list(fig, **{'created': True, 'closed': False, 'close_event_cid': cid})
-                PlotWindow._instance._update_fig_list()
+                if PlotWindow._instance:
+                    PlotWindow._instance._update_fig_list()
         except Exception as e:
             logger.error("Error when monitoring figure creation")
+            logger.exception(e, exc_info=True, stack_info=True)
+
+    def notify_figure_window_closed(self, fig_num: int):
+        """Notify that a figure window has been closed by the user."""
+        try:
+            for key, fig in self._figure_uid.items():
+                if fig.number == fig_num:
+                    fig_info = self._figure_track_list.get(key, {})
+                    if 'figure_window' in fig_info:
+                        del fig_info['figure_window']
+                    break
+            self._update_fig_list()
+        except Exception as e:
+            logger.error("Error when notifying figure window closed")
             logger.exception(e, exc_info=True, stack_info=True)
 
     @staticmethod
@@ -243,12 +242,15 @@ class PlotWindow(QMainWindow):
         try:
             fig = event.canvas.figure
             if PlotWindow._check_fig_in_list(fig):
-                fig.canvas.mpl_disconnect(PlotWindow._get_fig_info_in_list(fig)['close_event_cid'])
+                fig_info = PlotWindow._get_fig_info_in_list(fig)
+                if 'close_event_cid' in fig_info:
+                    fig.canvas.mpl_disconnect(fig_info['close_event_cid'])
                 PlotWindow._update_fig_info_in_list(fig, **{'closed': True})
             else:
                 logger.warning(f"Warning: fig {id(fig)} was not in the figure track list.")
-            PlotWindow._instance._update_fig_list()
-            logger.debug(f"Figure {fig.number} closed.")
+            if PlotWindow._instance:
+                PlotWindow._instance._update_fig_list()
+            logger.info(f"Figure {fig.number} closed.")
         except Exception as e:
             logger.error("Error when monitoring figure closing")
             logger.exception(e, exc_info=True, stack_info=True)
@@ -265,7 +267,11 @@ class PlotWindow(QMainWindow):
 
     def add_figure(self, fig: Figure):
         try:
-            self._on_figure_created(fig)
+            if fig is None:
+                logger.error("Cannot add None figure")
+                return
+                
+            self._on_figure_created(fig) #this will check the track list and add the figure if it is not in the list
             item = QListWidgetItem(self._format_figure_name(fig, False))
             item.setData(Qt.ItemDataRole.UserRole, fig)
             self.list_widget.addItem(item)
@@ -279,9 +285,9 @@ class PlotWindow(QMainWindow):
             for index in range(self.list_widget.count()):
                 item = self.list_widget.item(index)
                 fig = item.data(Qt.ItemDataRole.UserRole)
-                if PlotWindow._check_fig_in_list(fig):
+                if fig is not None and PlotWindow._check_fig_in_list(fig):
                     fig_info = PlotWindow._get_fig_info_in_list(fig)
-                    close_flag = fig_info['closed']
+                    close_flag = fig_info.get('closed', False)
                     fig_name = self._format_figure_name(fig, close_flag)
                     if fig is plt.gcf():
                         fig_name += "*"
@@ -295,9 +301,10 @@ class PlotWindow(QMainWindow):
             logger.exception(e, exc_info=True, stack_info=True)
 
     def _update_info_panel(self, fig: Figure):
-        if PlotWindow._check_fig_in_list(fig):
+        if fig is not None and PlotWindow._check_fig_in_list(fig):
             fig_num = fig.number
-            close_status = PlotWindow._get_fig_info_in_list(fig)['closed']
+            fig_info = PlotWindow._get_fig_info_in_list(fig)
+            close_status = fig_info.get('closed', False)
             text = f"""Figure {fig_num}\nAxes: {len(fig.get_axes())}\nClosed: {close_status}"""
             self.info_window.setText(text)
 
@@ -311,12 +318,16 @@ class PlotWindow(QMainWindow):
 
         """
         fig = item.data(Qt.ItemDataRole.UserRole)
-        self._update_fig_list()
-        self._update_info_panel(fig)
+        if fig is not None:
+            # Make the selected figure active
+            plt.figure(fig.number)
+            self._update_fig_list()
+            self._update_info_panel(fig)
 
     def _on_figure_double_clicked(self, item: QListWidgetItem):
         fig = item.data(Qt.ItemDataRole.UserRole)
-        self.show_figure_window(fig)
+        if fig is not None:
+            self.show_figure_window(fig)
 
     def _open_context_menu(self, position):
         menu = QMenu(self)
@@ -328,6 +339,9 @@ class PlotWindow(QMainWindow):
             return
 
         fig = selected_item.data(Qt.ItemDataRole.UserRole)
+        if fig is None:
+            return
+            
         action = menu.exec(self.list_widget.mapToGlobal(position))
 
         if action is save_action:
@@ -350,6 +364,10 @@ class PlotWindow(QMainWindow):
 
     def show_figure_window(self, fig: Figure):
         try:
+            if fig is None:
+                logger.error("Cannot show None figure")
+                return
+                
             if PlotWindow._check_fig_in_list(fig):
                 fig_record = PlotWindow._get_fig_info_in_list(fig)
                 if "figure_window" not in fig_record:
@@ -358,7 +376,13 @@ class PlotWindow(QMainWindow):
                     window.show()
                 else:
                     window = fig_record["figure_window"]
-                    window.showNormal()
+                    if hasattr(window, 'isVisible') and window.isVisible():
+                        window.showNormal()
+                    else:
+                        # Recreate window if it was closed
+                        window = FigureWindow(fig, parent=self)
+                        PlotWindow._update_fig_info_in_list(fig, **{"figure_window": window})
+                        window.show()
 
                 window.raise_()
                 window.activateWindow()
@@ -379,11 +403,46 @@ class PlotWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            for fig_info in PlotWindow._figure_track_list.values():
-                if "figure_window" in fig_info:
-                    fig_info["figure_window"].close()
+            # Close all matplotlib figures first
+            # Close only the figures tracked by PlotWindow, not all matplotlib figures
+            try:
+                # Make a list of keys to avoid modifying the dict while iterating
+                keys = list(PlotWindow._figure_track_list.keys())
+                for key in keys:
+                    fig_info = PlotWindow._figure_track_list.get(key, {})
+                    # Close the associated matplotlib figure if it exists and is not already closed
+                    fig = PlotWindow._figure_uid.get(key)
+                    if fig is not None:
+                        try:
+                            plt.close(fig)
+                        except Exception as e:
+                            logger.error(f"Error closing matplotlib figure {fig}")
+                            logger.exception(e, exc_info=True, stack_info=True)
+                    # Close the associated figure window if it exists
+                    if "figure_window" in fig_info:
+                        try:
+                            fig_info["figure_window"].close()
+                        except Exception as e:
+                            logger.error("Error closing figure window")
+                            logger.exception(e, exc_info=True, stack_info=True)
+            except Exception as e:
+                logger.error("Error during force_close_all")
+                logger.exception(e, exc_info=True, stack_info=True)
+            
+            # Clear list widget items to prevent memory leaks
+            try:
+                self.list_widget.clear()
+            except Exception as e:
+                logger.error("Error clearing list widget")
+                logger.exception(e, exc_info=True, stack_info=True)
+            
+            # Clear tracking data
             self._figure_track_list.clear()
             self._figure_uid.clear()
+            
+            # Clear the singleton instance
+            PlotWindow._instance = None
+            
             self.close()
 
     def closeEvent(self, event):
@@ -397,7 +456,7 @@ class PlotWindow(QMainWindow):
 # --- Test Script ---
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-
+    logging.basicConfig(level=logging.INFO)
     plot_window = PlotWindow(allow_full_close=True)
     plot_window.show()
 
