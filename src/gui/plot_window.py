@@ -30,7 +30,7 @@ import intercepts
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-from PyQt6.QtCore import Qt, QMutexLocker, QReadLocker, QWriteLocker
+from PyQt6.QtCore import Qt, QMutex
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QApplication, QFileDialog, QListWidget,
                              QListWidgetItem, QMainWindow, QMenu, QMessageBox,
@@ -50,7 +50,7 @@ class FigureWindow(QMainWindow):
             parent window that will receive notification when the user closes
             the figure window.
     """
-    _figurewindow_lock = QMutexLocker()
+    _figurewindow_mutex = QMutex()
 
     def __init__(self, fig: Figure, parent=None):
         super().__init__(parent)
@@ -129,7 +129,7 @@ class PlotWindow(QMainWindow):
             later by calling the function show_window()        
 
     """
-    _plotwindow_lock = QMutexLocker()
+    _plotwindow_mutex = QMutex()
     figure_creation_hook = False
     _figure_uid: dict[int, Figure] = dict()
     _figure_track_list = dict()
